@@ -25,6 +25,9 @@
 *  5 - shutdown() support
 *  6 - be able to connect with protocol/service names
 *  7 - set_option(...) allowing a variadic template to set every client or server option
+*  8 - allowed client list (IPs list with allowed clients)
+*  9 - logger callback
+* 10 - test_connected fussion with is_connected()
 * 15 - Winsock support (in the future)
 *
 *************************************************************/
@@ -193,7 +196,6 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
   std::string in;
   int bytes_received;
   size_t requested_size=size;
-
   if (timeout==-1)
     timeout = default_values.timeout;
 
@@ -410,7 +412,7 @@ void Glove::connect(const std :: string & host, const int port, double timeout, 
 	  throw GloveException(3, "Cannot get IP address");
 	connectionInfo.ip_address = ipaddress;
       }
-    else
+    else 
       CLOSE(sockfd);
   }
 
@@ -418,6 +420,7 @@ void Glove::connect(const std :: string & host, const int port, double timeout, 
     throw GloveException(4, append_errno("Cannot connect to the server: "));
 
   freeaddrinfo ( servinfo );
+  errno = 0;			// clear remaining connect_nonblocking error
 }
 
 void Glove::disconnect()
@@ -481,7 +484,7 @@ bool Glove::connect_nonblocking(const sockaddr * saptr, socklen_t salen, const d
 	return false;
     }
 
-  if (n != 0)
+  if (n < 0)
     {
       int sres = select(timeout, SELECT_READ | SELECT_WRITE);
       if ( sres == TCP_ERROR )
@@ -491,17 +494,48 @@ bool Glove::connect_nonblocking(const sockaddr * saptr, socklen_t salen, const d
       	  errno = ETIMEDOUT;
       	  return false;
       	}
+      else
+	{
+	  size_t len = sizeof(error);
+	  if (GETSOCKOPT(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+	    {
+	      return false;           /* Solaris pending error */
+	    }
+	}
     }
   fcntl(sockfd, F_SETFL, flags);  /* restore file status flags */
 
-  if (error) 
-    errno = error;
+  if (error)
+    {
+      // Exceptions on some typical errors?
+      // 111 : Connection refused
+      errno = error;
+    }
 
   return (error==0);
 }
 
 bool Glove::is_connected()
 {
+  char buf;
+
+  if (!connected)
+    return false;
+
+  int res = recv(sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+  if (res<0)
+    {
+      // Maybe disconnected or maybe not...
+      if (errno == EAGAIN || errno == EWOULDBLOCK)
+	return true;
+      else
+	throw GloveException(18, append_errno("Socket error"));
+    }
+  else if (res==0)
+    {
+      connected = false;
+      return false;
+    }
   // We can do it better
   return connected;
 }
