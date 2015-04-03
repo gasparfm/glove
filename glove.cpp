@@ -1,7 +1,7 @@
 /**
 *************************************************************
 * @file glove.cpp
-* @brief Tiny and standalone TCP socket C++11 wrapper
+* @brief Tiny and standalone TCP socket C++11 wrapper and more
 *
 * @author Gaspar Fernández <blakeyed@totaki.com>
 * @version
@@ -10,6 +10,8 @@
 * Notes:
 *  - Some ideas borrowed from some projects I've made in the past.
 *  - Some code borrowed from r-lyeh's knot ( https://github.com/r-lyeh/knot )
+*  - urlencode/urldecode borrowed from knot base on code by Fred Bulback
+*  - base64 encode/decode functions by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
 *
 * Changelog:
 *  20140807 : Begin this project
@@ -18,6 +20,7 @@
 *  20140914 : Some bugfixing and Glove constructors
 *  20140919 : build_uri(), better test_connected()
 *  20140923 : get_from_uri() - The unmaintainable!
+*  20150404 : urlencode/urldecode/base64 encode/base64 decode helpers
 *
 * To-do:
 *  1 - Some more documentation
@@ -267,7 +270,7 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 	}
     }
   while ( (requested_size > 0) && (!read_once) );
-
+  std::cout << "FIN RECV"<<std::endl;
   return run_filters(FILTER_INPUT, in);
 }
 
@@ -500,6 +503,172 @@ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resol
   _uri.service=uristring.substr(0, _space);
 
   return _uri;
+}
+
+// ------------- tools ---------------
+// borrowed from original knot https://github.com/r-lyeh/knot
+// knot had adapted it from code by Fred Bulback
+std::string GloveBase::urlencode( const std::string &str ) 
+{
+  auto to_hex = [](char code) -> char
+    {
+      static char hex[] = "0123456789abcdef";
+      return hex[code & 15];
+    };
+
+  std::string out( str.size() * 3, '\0' );
+  const char *pstr = str.c_str();
+  char *buf = &out[0], *pbuf = buf;
+  while (*pstr) 
+    {
+      if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~')
+	*pbuf++ = *pstr;
+      else if (*pstr == ' ')
+	*pbuf++ = '+';
+      else
+	*pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
+      pstr++;
+    }
+
+  return out.substr( 0, pbuf - buf );
+}
+
+std::string GloveBase::urldecode( const std::string &str )
+{
+  auto from_hex = [](char ch) -> char 
+    {
+      return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
+    };
+
+  const char *pstr = str.c_str();
+  std::string out( str.size(), '\0' );
+  char *buf = &out[0], *pbuf = buf;
+  while (*pstr) 
+    {
+      if (*pstr == '%') 
+	{
+	  if (pstr[1] && pstr[2]) 
+	    {
+	      *pbuf++ = from_hex(pstr[1]) << 4 | from_hex(pstr[2]);
+	      pstr += 2;
+	    }
+	} 
+      else if (*pstr == '+') 
+	{
+	  *pbuf++ = ' ';
+	} 
+      else 
+	{
+	  *pbuf++ = *pstr;
+	}
+      pstr++;
+    }
+
+  return out.substr( 0, pbuf - buf );
+}
+
+namespace
+{
+  // Base64 encoder/decoder stuff
+  static const std::string base64_chars = 
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789+/";
+
+
+  static inline bool is_base64(unsigned char c) {
+    return (isalnum(c) || (c == '+') || (c == '/'));
+  }
+};
+
+std::string GloveBase::base64_encode(unsigned char const* bytes_to_encode, unsigned int in_len) 
+{
+  std::string ret;
+  int i = 0;
+  int j = 0;
+  unsigned char char_array_3[3];
+  unsigned char char_array_4[4];
+
+  while (in_len--) 
+    {
+      char_array_3[i++] = *(bytes_to_encode++);
+      if (i == 3) 
+	{
+	  char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+	  char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+	  char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+	  char_array_4[3] = char_array_3[2] & 0x3f;
+
+	  for(i = 0; (i <4) ; i++)
+	    ret += base64_chars[char_array_4[i]];
+	  i = 0;
+	}
+    }
+
+  if (i)
+    {
+      for(j = i; j < 3; j++)
+	char_array_3[j] = '\0';
+
+      char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+      char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+      char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+      char_array_4[3] = char_array_3[2] & 0x3f;
+
+      for (j = 0; (j < i + 1); j++)
+	ret += base64_chars[char_array_4[j]];
+
+      while((i++ < 3))
+	ret += '=';
+
+    }
+
+  return ret;
+}
+
+std::string GloveBase::base64_decode(std::string const& encoded_string) 
+{
+  int in_len = encoded_string.size();
+  int i = 0;
+  int j = 0;
+  int in_ = 0;
+  unsigned char char_array_4[4], char_array_3[3];
+  std::string ret;
+
+  while (in_len-- && ( encoded_string[in_] != '=') && is_base64(encoded_string[in_])) 
+    {
+      char_array_4[i++] = encoded_string[in_]; in_++;
+      if (i ==4) 
+	{
+	  for (i = 0; i <4; i++)
+	    char_array_4[i] = base64_chars.find(char_array_4[i]);
+
+	  char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+	  char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+	  char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+	  for (i = 0; (i < 3); i++)
+	    ret += char_array_3[i];
+	  i = 0;
+	}
+    }
+
+  if (i) 
+    {
+      for (j = i; j <4; j++)
+	char_array_4[j] = 0;
+
+      for (j = 0; j <4; j++)
+	char_array_4[j] = base64_chars.find(char_array_4[j]);
+
+      char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+      char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+      char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+      for (j = 0; (j < i - 1); j++) ret += char_array_3[j];
+    }
+
+  return ret;
 }
 
 // Glove::Glove(): connected(false), _shutdown_on_destroy(false), _resolve_hostnames(false), thread_clients(true), thread_server(true), server_reuseaddr(true), max_accepted_clients(2), _server_error_callback(NULL), accept_clients(false), clientId(0)

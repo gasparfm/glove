@@ -368,6 +368,13 @@ public:
   // service separator : "://"
   // 
   static uri get_from_uri (const std::string &uristring, bool resolve=true, std::string service_separator="");
+
+  // some more tools
+  static std::string urlencode( const std::string &str );
+  static std::string urldecode( const std::string &str );
+  static std::string base64_encode(unsigned char const* , unsigned int len);
+  static std::string base64_decode(std::string const& s);
+
 protected:
   // socket
   int sockfd;
