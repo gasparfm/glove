@@ -59,6 +59,18 @@ protected:
   std::string _message;
 };
 
+class GloveUriException : public GloveException
+{
+public:
+  GloveUriException(const int& code, const std::string &message): GloveException(code, message)
+  {
+  }
+
+  virtual ~GloveUriException() throw ()
+  {
+  }
+};
+
 class GloveBase
 {
 public:
@@ -67,7 +79,13 @@ public:
       SELECT_READ=1,
       SELECT_WRITE=2
     };
-
+  enum
+    {
+      SHUT_R = SHUT_RD,
+      SHUT_W = SHUT_WR,
+      SHUT_RW= SHUT_RDWR,
+      SHUT_XX
+    };
   enum:unsigned
     {
       EXCEPTION_NONE = 0,
@@ -89,6 +107,40 @@ public:
     std::string service;
   };
 
+  struct uri
+  {
+    std::string uri;
+    std::string host;
+    std::vector < std::string > path;
+    std::string rawpath;
+    std::string rawarguments;
+    std::map<std::string, std::string> arguments; // you can choose argument start character (?), argument separator character (;) and argument assign character (=)
+    std::string service;
+    std::string fragment;
+    std::string username;
+    std::string password;
+    std::vector <GloveBase::hostinfo> ressolvedhosts;
+    int port;
+
+    std::string uridebug()
+    {
+      std::string out = "URI: "+uri+"\n";
+      out+="Host: "+host+"\n";
+      out+="Path: "+rawpath+"\n";
+      for (auto _pi = path.begin(); _pi != path.end(); ++_pi)
+	out+= "   * "+*_pi+"\n";
+      out+="Arguments: "+rawarguments+"\n";
+      for (auto _pi = arguments.begin(); _pi != arguments.end(); ++_pi)
+	out+= "   * "+_pi->first+" = "+_pi->second+"\n";
+      out+="Service: "+service+"\n";
+      out+="Fragment: "+fragment+"\n";
+      out+="Port: "+std::to_string(port)+"\n";
+      out+="Username: "+username+"\n";
+      out+="Password: "+password+"\n";
+
+      return out;
+    }
+  };
   static const char* CRLF;
 
   GloveBase(): default_values({GLOVE_DEFAULT_TIMEOUT, EXCEPTION_ALL, false, false, 0, GLOVE_DEFAULT_BUFFER_SIZE, true, true})
@@ -148,6 +200,29 @@ public:
   void setsockopt(int optname, int val);
   void getsockopt(int optname, int &val);
 
+  // getsockname interface
+  void get_address(std::string &ip, int &port, bool noexcp=false);
+
+  std::string get_address(bool noexcp=false)
+  {
+    int port;
+    return get_address(port, noexcp);
+  }
+
+  std::string get_address(int &port, bool noexcp=false)
+  {
+    std::string addr;
+    get_address(addr, port, noexcp);
+    return addr;
+  }
+
+  int get_connected_port(bool noexcp=false)
+  {
+    int port;
+    get_address(port, noexcp);
+
+    return port;
+  }
   // stream operations and manipulators
   template <typename T>
 
@@ -283,6 +358,16 @@ public:
   std::vector<std::string> get_filters(filter_type type);
   std::string run_filters(filter_type type, const std::string &_input);
 
+  void disconnect(int how=SHUT_XX);
+  // other utils
+  static std::string build_uri (const std::string &service, const std::string &host, int port=0, const std::string &username="", const std::string &password="");
+  static std::string build_uri (const std::string &host, int port=0, const std::string &username="", const std::string &password="")
+  {
+    return build_uri("", host, port, username, password);
+  }
+  // service separator : "://"
+  // 
+  static uri get_from_uri (const std::string &uristring, bool resolve=true, std::string service_separator="");
 protected:
   // socket
   int sockfd;
@@ -335,6 +420,7 @@ protected:
   static int get_integer_sockopts_level(int optname);
 
   void register_dtm();
+  static std::string user_and_pass(const std::string& user, const std::string &password);
   static std::string append_errno(std::string message);
 };
 
@@ -388,7 +474,7 @@ public:
   static std::vector<hostinfo> resolveHost(const std::string& host);
 
   void connect ( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN);
-  void disconnect ();
+  void disconnect (int how=SHUT_XX);
   inline void send ( const std::string& data)
   {
     if (!test_connected())
@@ -505,4 +591,5 @@ protected:
   unsigned clientId;
 };
 
+#undef option_conf
 #endif /* _GLOVE_HPP */
