@@ -270,7 +270,7 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 	}
     }
   while ( (requested_size > 0) && (!read_once) );
-  std::cout << "FIN RECV"<<std::endl;
+
   return run_filters(FILTER_INPUT, in);
 }
 
