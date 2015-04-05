@@ -17,6 +17,8 @@
 *
 * To-do:
 *   - Loooots of things
+*   - Max. size of strings
+*   - Size test of strings
 *   - Be able to process FastCGI requests to use with Apache/NGinx and more
 *
 * MIT Licensed:
@@ -56,51 +58,51 @@ const std::vector < std::string> GloveHttpServer::StandardMethods ={ "GET", "POS
 #define AddGloveHttpResponse(response, text, description)	\
   {response, {text, description} }
 
-const int GloveHttpResponse::CONTINUE = 100;
-const int GloveHttpResponse::SWITCH_PROTOCOLS = 101;
-const int GloveHttpResponse::PROCESSING = 102;      // WebDAV
+const short GloveHttpResponse::CONTINUE = 100;
+const short GloveHttpResponse::SWITCH_PROTOCOLS = 101;
+const short GloveHttpResponse::PROCESSING = 102;      // WebDAV
 /* 2XX success */
-const int GloveHttpResponse::OK = 200;
-const int GloveHttpResponse::CREATED = 201;
-const int GloveHttpResponse::ACCEPTED = 202;
-const int GloveHttpResponse::NON_AUTHORITATIVE = 203; 
-const int GloveHttpResponse::NO_CONTENT = 204;
-const int GloveHttpResponse::RESET_CONTENT = 205;
-const int GloveHttpResponse::PARTIAL_CONTENT = 206;
-const int GloveHttpResponse::MULTI_STATUS = 207;     // WebDAV
-const int GloveHttpResponse::ALREADY_REPORTED = 208; // WebDAV
-const int GloveHttpResponse::IM_USED = 209;
+const short GloveHttpResponse::OK = 200;
+const short GloveHttpResponse::CREATED = 201;
+const short GloveHttpResponse::ACCEPTED = 202;
+const short GloveHttpResponse::NON_AUTHORITATIVE = 203; 
+const short GloveHttpResponse::NO_CONTENT = 204;
+const short GloveHttpResponse::RESET_CONTENT = 205;
+const short GloveHttpResponse::PARTIAL_CONTENT = 206;
+const short GloveHttpResponse::MULTI_STATUS = 207;     // WebDAV
+const short GloveHttpResponse::ALREADY_REPORTED = 208; // WebDAV
+const short GloveHttpResponse::IM_USED = 209;
 /* 3XX redirection */
-const int GloveHttpResponse::MULTIPLE_CHOICES = 300;
-const int GloveHttpResponse::MOVED_PERMANENTLY = 301;
-const int GloveHttpResponse::FOUND = 302;
-const int GloveHttpResponse::SEE_OTHER = 303;
-const int GloveHttpResponse::NOT_MODIFIED = 304;
-const int GloveHttpResponse::USE_PROXY = 305;
-const int GloveHttpResponse::SWITCH_PROXY = 306;
-const int GloveHttpResponse::TEMPORARY_REDIRECT = 307;
-const int GloveHttpResponse::PERMANENT_REDIRECT = 308;
+const short GloveHttpResponse::MULTIPLE_CHOICES = 300;
+const short GloveHttpResponse::MOVED_PERMANENTLY = 301;
+const short GloveHttpResponse::FOUND = 302;
+const short GloveHttpResponse::SEE_OTHER = 303;
+const short GloveHttpResponse::NOT_MODIFIED = 304;
+const short GloveHttpResponse::USE_PROXY = 305;
+const short GloveHttpResponse::SWITCH_PROXY = 306;
+const short GloveHttpResponse::TEMPORARY_REDIRECT = 307;
+const short GloveHttpResponse::PERMANENT_REDIRECT = 308;
 /* 4XX client error  */
-const int GloveHttpResponse::BAD_REQUEST = 400;
-const int GloveHttpResponse::UNAUTHORIZED = 401;
-const int GloveHttpResponse::PAYMENT_REQUIRED = 402;
-const int GloveHttpResponse::FORBIDDEN = 403;
-const int GloveHttpResponse::NOT_FOUND = 404;
-const int GloveHttpResponse::BAD_METHOD = 405;
-const int GloveHttpResponse::NOT_ACCEPTABLE = 406;
-const int GloveHttpResponse::PROXY_AUTH_REQ = 407;
-const int GloveHttpResponse::REQUEST_TIMEOUT = 408;
-const int GloveHttpResponse::CONFLICT = 409;
-const int GloveHttpResponse::GONE = 410;
-const int GloveHttpResponse::LENGTH_REQUIRED = 411;
-const int GloveHttpResponse::PRECOND_FAILED = 412;
-const int GloveHttpResponse::REQUEST_TOO_LARGE = 413;
-const int GloveHttpResponse::URI_TOO_LONG = 414;
-const int GloveHttpResponse::UNSUPPORTED_MEDIA = 415;
-const int GloveHttpResponse::RANGE_NOT_SATISF = 416;
-const int GloveHttpResponse::EXPECTATION_FAILED = 417;
-const int GloveHttpResponse::IM_A_TEAPOT = 418;
-const int GloveHttpResponse::AUTH_TIMEOUT = 419; // Not standard
+const short GloveHttpResponse::BAD_REQUEST = 400;
+const short GloveHttpResponse::UNAUTHORIZED = 401;
+const short GloveHttpResponse::PAYMENT_REQUIRED = 402;
+const short GloveHttpResponse::FORBIDDEN = 403;
+const short GloveHttpResponse::NOT_FOUND = 404;
+const short GloveHttpResponse::BAD_METHOD = 405;
+const short GloveHttpResponse::NOT_ACCEPTABLE = 406;
+const short GloveHttpResponse::PROXY_AUTH_REQ = 407;
+const short GloveHttpResponse::REQUEST_TIMEOUT = 408;
+const short GloveHttpResponse::CONFLICT = 409;
+const short GloveHttpResponse::GONE = 410;
+const short GloveHttpResponse::LENGTH_REQUIRED = 411;
+const short GloveHttpResponse::PRECOND_FAILED = 412;
+const short GloveHttpResponse::REQUEST_TOO_LARGE = 413;
+const short GloveHttpResponse::URI_TOO_LONG = 414;
+const short GloveHttpResponse::UNSUPPORTED_MEDIA = 415;
+const short GloveHttpResponse::RANGE_NOT_SATISF = 416;
+const short GloveHttpResponse::EXPECTATION_FAILED = 417;
+const short GloveHttpResponse::IM_A_TEAPOT = 418;
+const short GloveHttpResponse::AUTH_TIMEOUT = 419; // Not standard
 /* 420 (Method Failure - Spring Framework)
    Not part of the HTTP standard, but defined by Spring in the HttpStatus 
    class to be used when a method failed. This status code is deprecated 
@@ -110,39 +112,39 @@ const int GloveHttpResponse::AUTH_TIMEOUT = 419; // Not standard
    Search and Trends API when the client is being rate limited.[16] Other 
    services may wish to implement the 429 Too Many Requests response code instead. */
 /* 421 (Unused) */
-const int GloveHttpResponse::UNPROC_ENTITY = 422;   // WebDAV
-const int GloveHttpResponse::LOCKED = 423;	    // WebDAV
-const int GloveHttpResponse::FAILED_DEPEND = 424;   // WebDAV
+const short GloveHttpResponse::UNPROC_ENTITY = 422;   // WebDAV
+const short GloveHttpResponse::LOCKED = 423;	    // WebDAV
+const short GloveHttpResponse::FAILED_DEPEND = 424;   // WebDAV
 /* 425 (Unused) */
-const int GloveHttpResponse::UPGRADE_REQUIRED = 426;
+const short GloveHttpResponse::UPGRADE_REQUIRED = 426;
 /* 427 (Unused) */
-const int GloveHttpResponse::PRECOND_REQUIRED = 428;
-const int GloveHttpResponse::TOO_MANY_REQUESTS = 429;
+const short GloveHttpResponse::PRECOND_REQUIRED = 428;
+const short GloveHttpResponse::TOO_MANY_REQUESTS = 429;
 /* 430 (Unused) */
-const int GloveHttpResponse::HEADER_TOO_LARGE = 431;
+const short GloveHttpResponse::HEADER_TOO_LARGE = 431;
 /* From 432 there are no used codes. 
    But some of them are used by certain servers (not as part of the standard) */
-const int GloveHttpResponse::LOGIN_TIMEOUT = 440;     // Microsoft
-const int GloveHttpResponse::NO_RESPONSE = 444;	      // Nginx
-const int GloveHttpResponse::RETRY_WITH = 449;	      // Microsoft
-const int GloveHttpResponse::BLOCKED_PARENTAL = 450;  // Microsoft
-const int GloveHttpResponse::UNAVAILABLE_LEGAL = 451; // Draft: http://tools.ietf.org/html/draft-tbray-http-legally-restricted-status-04
+const short GloveHttpResponse::LOGIN_TIMEOUT = 440;     // Microsoft
+const short GloveHttpResponse::NO_RESPONSE = 444;	      // Nginx
+const short GloveHttpResponse::RETRY_WITH = 449;	      // Microsoft
+const short GloveHttpResponse::BLOCKED_PARENTAL = 450;  // Microsoft
+const short GloveHttpResponse::UNAVAILABLE_LEGAL = 451; // Draft: http://tools.ietf.org/html/draft-tbray-http-legally-restricted-status-04
 
 /* 5XX server's fault */
-const int GloveHttpResponse::INTERNAL_ERROR = 500;
-const int GloveHttpResponse::NOT_IMPLEMENTED = 501;
-const int GloveHttpResponse::BAD_GATEWAY = 502;
-const int GloveHttpResponse::SERVICE_UNAVAIL = 503;
-const int GloveHttpResponse::GATEWAY_TIMEOUT = 504;
-const int GloveHttpResponse::VERSION_NOT_SUP = 505;
-const int GloveHttpResponse::VAR_ALSO_NEGOT = 506;
-const int GloveHttpResponse::INSUFF_STORAGE = 507; // WebDAV
-const int GloveHttpResponse::LOOP_DETECTED = 508;  // WebDAV
-const int GloveHttpResponse::BW_LIMIT_EXCEED = 509; // Apache extension
-const int GloveHttpResponse::NOT_EXTENDED = 510;
-const int GloveHttpResponse::NW_AUTH_REQ = 511;
+const short GloveHttpResponse::INTERNAL_ERROR = 500;
+const short GloveHttpResponse::NOT_IMPLEMENTED = 501;
+const short GloveHttpResponse::BAD_GATEWAY = 502;
+const short GloveHttpResponse::SERVICE_UNAVAIL = 503;
+const short GloveHttpResponse::GATEWAY_TIMEOUT = 504;
+const short GloveHttpResponse::VERSION_NOT_SUP = 505;
+const short GloveHttpResponse::VAR_ALSO_NEGOT = 506;
+const short GloveHttpResponse::INSUFF_STORAGE = 507; // WebDAV
+const short GloveHttpResponse::LOOP_DETECTED = 508;  // WebDAV
+const short GloveHttpResponse::BW_LIMIT_EXCEED = 509; // Apache extension
+const short GloveHttpResponse::NOT_EXTENDED = 510;
+const short GloveHttpResponse::NW_AUTH_REQ = 511;
 
-const std::map <int, GloveHttpResponse::ResponseCode> GloveHttpResponse::responseCodes = 
+const std::map <short, GloveHttpResponse::ResponseCode> GloveHttpResponse::responseCodes = 
   {
     // List of http status codes (http://en.wikipedia.org/wiki/List_of_HTTP_status_codes)
     /* 1XX informational */
@@ -225,6 +227,27 @@ const std::map <int, GloveHttpResponse::ResponseCode> GloveHttpResponse::respons
     AddGloveHttpResponse(NOT_EXTENDED,      "Not Extended", 			"Further extensions to the request are required for the server to fulfil it."),
     AddGloveHttpResponse(NW_AUTH_REQ, 	    "Netwok Authentication Required",   "The client needs to authenticate to gain network access.")
   };
+
+/* Like Apache error responses */
+const std::string GloveHttpResponse::defaultResponseTemplate = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n"
+"<html>\n"
+"  <head>\n"
+"    <title>{:title}</title>\n"
+"  </head>\n"
+"<body>\n"
+"  <h1>{:header}</h1>\n"
+"  <p>{:message}</p>\n"
+"  <hr>\n"
+"  <address>{:signature}</address>\n"
+"</body>\n"
+"</html>";
+
+const short GloveHttpServer::RESPONSE_ERROR = 404;
+const short GloveHttpServer::MESSAGE_NOTFOUND = 666;
+
+const std::map<short, std::string> GloveHttpServer::_defaultMessages = {
+  { MESSAGE_NOTFOUND, "The requested URL {:urlcut} was not found on this server" }
+};
 namespace
 {
   const std::string white_spaces( " \f\n\r\t\v" );
@@ -235,6 +258,44 @@ namespace
     std::string::size_type pos_start = str.find_first_not_of( trimChars );
 
     return str.substr( pos_start, pos_end - pos_start + 1 );
+  }
+
+  // We could use regex but gcc 4.8 still hasn't implemented them.
+  // gcc 4.9 finally can use regex, but I MUST do it compatible with 4.8
+  std::string string_replace(std::string source, std::map<std::string,std::string>strMap, int offset=0, int times=0)
+  {
+    int total = 0;
+    std::string::size_type pos=offset;
+    std::string::size_type newPos;
+    std::string::size_type lowerPos;
+
+    do
+      {
+	std::string rep;
+	for (auto i=strMap.begin(); i!=strMap.end(); ++i)
+	  {
+	    std::string fromStr = i->first;
+
+	    newPos = source.find(fromStr, pos);
+	    if ( (i==strMap.begin()) || (newPos<lowerPos) )
+	      {
+		rep = fromStr;
+		lowerPos = newPos;
+	      }
+	  }
+
+	pos = lowerPos;
+	if (pos == std::string::npos)
+	  break;
+
+	std::string toStr = strMap[rep];
+
+	source.replace(pos, rep.length(), toStr);
+	pos+=toStr.size();
+
+      } while ( (times==0) || (++total<times) );
+
+    return source;
   }
 
   void extract_headers( std::string input, std::map<std::string, std::string> &headers, int start)
@@ -278,8 +339,8 @@ namespace
   }
 };
 
-GloveHttpRequest::GloveHttpRequest(Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort):
-  c(c), error(error), raw_location(raw_location), method(method), data(data), headers(httpheaders)
+GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort):
+  srv(server), c(c), error(error), raw_location(raw_location), method(method), data(data), headers(httpheaders)
 {
   location = Glove::urldecode(raw_location);
 
@@ -363,7 +424,18 @@ std::string GloveHttpRequest::getAuthData()
     return "";
 }
 
-GloveHttpResponse::GloveHttpResponse(std::string contentType):contentType(contentType),returnCode(GloveHttpResponse::OK)
+std::string GloveHttpRequest::getMessage(std::string _template)
+{
+  return string_replace(_template, 
+			{
+			  {"{:url}", location},
+			  {"{:urlcut}", location.substr(0, 50) },
+			    {"{:method}", method }
+			});
+  
+}
+
+GloveHttpResponse::GloveHttpResponse(std::string contentType):contentType(contentType),_responseCode(GloveHttpResponse::OK)
 {
 
 }
@@ -372,10 +444,32 @@ GloveHttpResponse::~GloveHttpResponse()
 {
 }
 
+short GloveHttpResponse::code(short rc)
+{
+  if (rc>0)
+    _responseCode = rc;
+
+  return _responseCode;
+}
+
 void GloveHttpResponse::send(Glove::Client &client)
 {
-  client << "HTTP/1.1 200 OK"<<Glove::CRLF<<Glove::CRLF;
+  client << "HTTP/1.1 "<<std::to_string(code())<<" "<<responseMessage()<<Glove::CRLF<<Glove::CRLF;
   client << output.str();
+}
+
+void GloveHttpResponse::clear()
+{
+  output.clear();
+}
+
+std::string GloveHttpResponse::responseMessage(short responseCode)
+{
+  auto _rc = responseCodes.find(responseCode);
+  if (_rc!=responseCodes.end())
+    return _rc->second.message;
+
+  return "";
 }
 
 GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, std::vector<std::string> methods):
@@ -421,8 +515,6 @@ bool GloveHttpUri::match(std::string method, GloveBase::uri uri, std::map<std::s
 
   // Arguments count out of range
   int args = uri.path.size();
-  std::cout << "args: "<<args<<std::endl;
-  std::cout << "Min: "<<minArgs<<"; Max="<<maxArgs<<std::endl;
   if ( (args<minArgs) || (args>maxArgs) )
     return false;
 
@@ -449,17 +541,41 @@ bool GloveHttpUri::match(std::string method, GloveBase::uri uri, std::map<std::s
 
 void GloveHttpUri::callAction(GloveHttpRequest& request, GloveHttpResponse& response)
 {
-  std::cout << "LO VOY A LLAMAR"<<std::endl;
   callback(request, response);
+}
+
+std::string GloveHttpServer::serverSignature(std::string newSig)
+{
+  _serverSignature = newSig;
+}
+
+std::string GloveHttpServer::serverSignature(GloveHttpRequest& req)
+{
+  return string_replace(_serverSignature,
+		      {
+			{"{:serverHost}", req.getUri().host},
+			{"{:serverPort}", std::to_string(port)}
+		      });
 }
 
 GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain):port(listenPort)
 {
+  namespace ph = std::placeholders;
+
+  _serverSignature = "Glove Http Server/" GHS_VERSION_STR " at {:serverHost} Port {:serverPort}";
+
+  // addResponseProcessor(404, std::bind(&GloveHttpServer::response404Processor, this, ph::_1, ph::_2));
+  addResponseProcessor(GloveHttpResponse::NOT_FOUND, GloveHttpServer::response404Processor);
+  addResponseGenericProcessor(GloveHttpResponse::INTERNAL_ERROR, GloveHttpServer::response5XXProcessor);
+
+  addAutoResponse(RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
+  messages = _defaultMessages;
+
   server = new Glove(listenPort, 
-  		     std::bind(&GloveHttpServer::clientConnection, this, std::placeholders::_1),
+  		     std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
   		     bind_ip,
   		     buffer_size, 
-  		     std::bind(&GloveHttpServer::gloveError, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
+  		     std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3),
   		     backlog_queue,
   		     domain);
   server->max_accepted_clients(2);
@@ -477,6 +593,16 @@ GloveHttpServer::~GloveHttpServer()
 void GloveHttpServer::addRoute(std::string route, url_callback callback, int maxArgs, std::vector<std::string> allowedMethods)
 {
   routes.push_back(GloveHttpUri(route, callback, maxArgs, allowedMethods));
+}
+
+void GloveHttpServer::addResponseProcessor(short errorCode, url_callback callback)
+{
+  responseProcessors[errorCode] = callback;
+}
+
+void GloveHttpServer::addResponseGenericProcessor(short errorCode, url_callback callback)
+{
+  responseProcessors[-errorCode%100] = callback;
 }
 
 bool GloveHttpServer::findRoute(std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special)
@@ -544,20 +670,41 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	{
 	  // Don't have enough information
 	  // CRLF not yet received
-	  if (input.find(Glove::CRLF) == std::string::npos)
+	  if ( (first_crlf = input.find(Glove::CRLF) ) == std::string::npos)
 	    continue;
 
+	  if ( first_crlf < 9 )
+	    {
+	      error = ERROR_SHORT_REQUEST;
+	      break;
+	    }
+
 	  std::string::size_type space_pos;
+	  space_pos = input.find(' ');
+	  if (space_pos == std::string::npos)
+	    {
+	      error = ERROR_NO_URI;
+	      break;
+	    }
+
 	  request_method = input.substr(0, ( ( space_pos = input.find(' ') ) != std::string::npos )? space_pos : 0  );
 
 	  // Test protocol.
 	  // We can improve it adding some more support, but it's enough for
 	  // a tiny web service
-	  if( input.substr( ( first_crlf = input.find(Glove::CRLF) ) - 8, 8) != "HTTP/1.1" )
+	  if( input.substr( first_crlf - 8, 8) != "HTTP/1.1" )
 	    {
 	      error = ERROR_BAD_PROTOCOL;
 	      break;
 	    }
+
+	  std::cout << "RRR: "<<first_crlf-8-space_pos<<std::endl;
+	  if (first_crlf-8-space_pos<=0)
+	    {
+	      error = ERROR_MALFORMED_REQUEST;
+	      break;
+	    }
+
 	  raw_location = trim(input.substr(space_pos, first_crlf-8-space_pos) );
 	}
 
@@ -569,7 +716,6 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       if( crlf_2 != std::string::npos && content_length == -1 )
 	{
 	  extract_headers(input, httpheaders, first_crlf+2);
-
 	  if ( !httpheaders["Content-Length"].empty() )
 	    {
 	      // We have Content-Length
@@ -585,21 +731,53 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       if (content_length > -1 && payload_received >= content_length)
 	receiving = false;
     }
-  if (receiving)
+  if ( (!error) && (receiving) )
     error = ERROR_TIMED_OUT;
 
-  GloveHttpRequest request(&client, error, request_method, raw_location, data, httpheaders, this->port);
+  GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
   GloveHttpResponse response(defaultContentType);
-  GloveHttpUri *guri;
 
-  if (findRoute(request_method, request.getUri(), guri, request.special))
+  if (error)
     {
-      guri->callAction(request, response);
+      std::cout << "TENGO ERR"<<std::endl;
+      switch (error)
+	{
+	case ERROR_NO_URI:
+	  response>>GloveHttpResponse::setCode(GloveHttpResponse::BAD_REQUEST);
+	case ERROR_BAD_PROTOCOL:
+	  response>>GloveHttpResponse::setCode(GloveHttpResponse::VERSION_NOT_SUP);
+	}
     }
   else
     {
-      // Test for error responses...
+      GloveHttpUri *guri;
+      if (findRoute(request_method, request.getUri(), guri, request.special))
+	{
+	  guri->callAction(request, response);
+	}
+      else
+	{
+	  response>>GloveHttpResponse::setCode(GloveHttpResponse::NOT_FOUND);
+	  // Test for error responses...
+	}
     }
+
+  auto resproc = responseProcessors.find(response.code());
+  if (resproc != responseProcessors.end())
+    resproc->second(request, response);
+  else
+    {
+      //      std::cout << "GENERIC PROC ("<<std::to_string(-response.code()%100)<<")" <<std::endl;
+      // Generic processors
+      resproc = responseProcessors.find(-response.code()%100);
+      if (resproc != responseProcessors.end())
+	{
+	  std::cout << "LO TENGO "<<std::endl;
+	  resproc->second(request, response);
+	}
+    }
+  // request chrono, processing chrono..
+
   response.send(client);
 }
 
@@ -611,4 +789,61 @@ void GloveHttpServer::gloveError(Glove::Client &client, int clientId, GloveExcep
 void GloveHttpServer::fileServer(GloveHttpRequest &request, GloveHttpResponse& response)
 {
   response<<extractFile(request.special["filename"].c_str());
+}
+
+void GloveHttpServer::responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response)
+{
+  response.clear();
+  response << string_replace(request.server()->autoResponses(GloveHttpServer::RESPONSE_ERROR),
+		      {
+			{"{:title}", std::to_string(response.code())+" "+response.responseMessage()},
+			{"{:header}", response.responseMessage()},
+			{"{:message}", request.getMessage(request.server()->responseMsg(MESSAGE_NOTFOUND))},
+			{"{:signature}",request.server()->serverSignature(request)}
+		      });
+}
+
+void GloveHttpServer::response5XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response)
+{
+  responseGenericError(request, response);
+}
+
+void GloveHttpServer::response404Processor(GloveHttpRequest& request, GloveHttpResponse& response)
+{
+  response.clear();
+  response << string_replace(request.server()->autoResponses(GloveHttpServer::RESPONSE_ERROR),
+		      {
+			{"{:title}", "404 Not Found"},
+			{"{:header}", "Not Found"},
+			{"{:message}", request.getMessage(request.server()->responseMsg(MESSAGE_NOTFOUND))},
+			{"{:signature}",request.server()->serverSignature(request)}
+		      });
+}
+
+void GloveHttpServer::addAutoResponse(short id, std::string response)
+{
+  _autoResponses[id] = response;
+}
+
+std::string GloveHttpServer::autoResponses(short responseId)
+{
+  auto rit = _autoResponses.find(responseId);
+  if (rit!=_autoResponses.end())
+    return rit->second;
+
+  return "";
+}
+
+std::string GloveHttpServer::responseMsg(short id, std::string msg)
+{
+  if (msg.empty())
+    {
+      auto _msg = messages.find(id);
+      if (_msg != messages.end())
+	return _msg->second;
+    }
+  else
+    messages[id] = msg;
+
+  return msg;
 }
