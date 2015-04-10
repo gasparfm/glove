@@ -69,8 +69,8 @@ class GloveHttpResponse
   ~GloveHttpResponse();
 
   void clear();
-  void send(Glove::Client &client);
-
+  void send(GloveHttpRequest &request, Glove::Client &client);
+  short file(std::string filename, bool addheaders=true);
   short code(short rc=0);
 
   static std::string responseMessage(short responseCode);
@@ -123,10 +123,30 @@ class GloveHttpResponse
     }
   };
 
-  friend GloveHttpResponse& operator>>(GloveHttpResponse& out, setCode mn)
+  friend GloveHttpResponse& operator<<(GloveHttpResponse& out, setCode mn)
   {
     return mn(out);
   }
+
+  struct setContentType : public GloveHttpResponseManipulator<std::string>
+  {
+  public:
+  setContentType(std::string val):GloveHttpResponseManipulator(val)
+    {
+    }
+
+    GloveHttpResponse& operator()(GloveHttpResponse& out)
+    {
+      out._contentType = val;
+      return out;
+    }
+  };
+
+  friend GloveHttpResponse& operator<<(GloveHttpResponse& out, setContentType mn)
+  {
+    return mn(out);
+  }
+
   /* Response codes! */
 
   /* 1XX */
@@ -204,16 +224,22 @@ class GloveHttpResponse
   /* Response templates */
   static const std::string defaultResponseTemplate;
 
+  /* action error codes */
+  static const short ALL_OK;
+  static const short FILE_CANNOT_READ;
  private:
   std::stringstream output;
   short _responseCode;
-  std::string contentType;
+  std::string _contentType;
   struct ResponseCode
   {
     std::string message;
     std::string description;
   };
   static const std::map<short, ResponseCode> responseCodes;
+
+  std::string getHeaderVary();
+
 };
 
 using _url_callback = std::function<void(GloveHttpRequest&, GloveHttpResponse&)>;
@@ -245,9 +271,13 @@ class GloveHttpServer
   /* Server configuration */
   GloveHttpServer(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN);
   virtual ~GloveHttpServer();
+  std::string defaultContentType(std::string dct="");
 
   std::string serverSignature(std::string newSig);
   std::string serverSignature(GloveHttpRequest& req);
+  void simpleSignature(std::string newSig);
+  std::string simpleSignature();
+
   /* rename: responseTemplates */
   std::string autoResponses(short responseId);
   void addAutoResponse(short id, std::string response);
@@ -259,14 +289,20 @@ class GloveHttpServer
   void addResponseGenericProcessor(short errorCode, url_callback callback);
 
   /* Information */
-  /* get version number, get version */
+  unsigned version();
+  std::string versionString();
   /* get stats */
+
+  static std::string unknownMimeType(std::string nmt ="");
+  static void addMimeType(std::string extension, std::string mimeType);
+  static std::string getMimeType(std::string extension);
 
   /* Common callbacks */
   static void fileServer(GloveHttpRequest &request, GloveHttpResponse& response);
 
   /* Default response processord */
   static void response404Processor(GloveHttpRequest& request, GloveHttpResponse& response);
+  static void response4XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response);
   static void response5XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response);
   static void responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response);
 
@@ -288,13 +324,35 @@ class GloveHttpServer
   std::string responseMsg(short id, std::string msg="");
   /* Message IDs */
   static const short int MESSAGE_NOTFOUND;
-
   /* Response IDs */
   static const short int RESPONSE_ERROR;
 
+
+  /* Mime types */
+  /* Who would want different MIME Types in different instances
+   of the server? */
  protected:
+  /* We could make this by method in the future... */
+  struct Httpmetrics
+  {
+    unsigned hits;
+    double totalQueryTime;
+    double totalProcessingTime;
+    double totalResponseTime;
+  };
+
+  struct VirtualHost
+  {
+    std::string name;
+
+  };
+
   Glove *server = NULL;
-  std::string defaultContentType;
+  std::string _defaultContentType;
+  std::map<std::string, VirtualHost> vhosts;
+  /* The alias and the name will be here, when a request come,
+     the host will be searched here. */
+  std::map<std::string, VirtualHost*> vhosts_aliases;
   std::vector<GloveHttpUri> routes;
   std::map<short, url_callback> responseProcessors;
   std::map<short, std::string> _autoResponses;
@@ -302,10 +360,17 @@ class GloveHttpServer
   static const std::map<short, std::string> _defaultMessages;
   int port;
   std::string _serverSignature; 
+  std::string _simpleSignature;
+  static std::map<std::string, std::string> _mimeTypes;
+  static std::string _unknownMimeType;
+  Httpmetrics metrics;
 
+  void initializeMetrics();
   bool findRoute(std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
   int clientConnection(Glove::Client &client);
   void gloveError(Glove::Client &client, int clientId, GloveException &e);
+
+  void addMetrics(GloveHttpRequest& request, double queryTime, double processingTime, double responseTime);
 };
 
 #endif /* _GLOVEHTTPSERVER_H */

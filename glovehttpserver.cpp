@@ -14,7 +14,8 @@
 * Changelog:
 *  20150403 : Begin this project
 *  20140404 : Added HTTP Response data
-*
+*  20150410 : 
+* 
 * To-do:
 *   - Loooots of things
 *   - Max. size of strings
@@ -45,7 +46,6 @@
 *************************************************************/
 
 #include "glovehttpserver.h"
-#include <chrono>
 #include <thread>
 #include <map>
 #include <string>
@@ -242,8 +242,17 @@ const std::string GloveHttpResponse::defaultResponseTemplate = "<!DOCTYPE HTML P
 "</body>\n"
 "</html>";
 
+const short GloveHttpResponse::ALL_OK = 0;
+// file() could not read the file. 404 returned if addheaders=true
+const short GloveHttpResponse::FILE_CANNOT_READ = 1;
+
 const short GloveHttpServer::RESPONSE_ERROR = 404;
 const short GloveHttpServer::MESSAGE_NOTFOUND = 666;
+
+std::string GloveHttpServer::_unknownMimeType = "application/octet-stream";
+std::map<std::string, std::string> GloveHttpServer::_mimeTypes = {
+  {"html", "text/html"}, {"jpg", "image/jpeg"}, {"png", "image/png"}
+};
 
 const std::map<short, std::string> GloveHttpServer::_defaultMessages = {
   { MESSAGE_NOTFOUND, "The requested URL {:urlcut} was not found on this server" }
@@ -337,6 +346,41 @@ namespace
     close(fd);
     return output;
   }
+
+  // Gets file extension
+  static std::string fileExtension(std::string fileName)
+  {
+    auto dotPos = fileName.find_last_of(".");
+    if(dotPos != std::string::npos)
+        return fileName.substr(dotPos+1);
+
+    return "";
+ }
+
+  static std::string rfc1123date()
+  {
+    std::time_t t = time(NULL);
+    std::tm tm;
+    static const char *month_names[12] =
+      {
+	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+      };
+    static const char *day_names[7] =
+      {
+	"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+      };
+    gmtime_r(&t, &tm);
+
+    std::string s( 128, '\0' );
+    s = std::string(day_names[tm.tm_wday])+", "+std::to_string(tm.tm_mday)+" "+
+      std::string(month_names[tm.tm_mon])+" "+std::to_string(tm.tm_year)+" "+
+      std::to_string(tm.tm_hour)+":"+std::to_string(tm.tm_min)+":"+
+      std::to_string(tm.tm_sec)+" GMT";
+
+    return s;
+  }
+
 };
 
 GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort):
@@ -435,7 +479,7 @@ std::string GloveHttpRequest::getMessage(std::string _template)
   
 }
 
-GloveHttpResponse::GloveHttpResponse(std::string contentType):contentType(contentType),_responseCode(GloveHttpResponse::OK)
+GloveHttpResponse::GloveHttpResponse(std::string contentType):_contentType(contentType),_responseCode(GloveHttpResponse::OK)
 {
 
 }
@@ -452,10 +496,37 @@ short GloveHttpResponse::code(short rc)
   return _responseCode;
 }
 
-void GloveHttpResponse::send(Glove::Client &client)
+void GloveHttpResponse::send(GloveHttpRequest &request, Glove::Client &client)
 {
-  client << "HTTP/1.1 "<<std::to_string(code())<<" "<<responseMessage()<<Glove::CRLF<<Glove::CRLF;
-  client << output.str();
+  std::string outputStr = output.str();
+  client << "HTTP/1.1 "<<std::to_string(code())<<" "<<responseMessage()<<Glove::CRLF;
+  client << "Date: "<<rfc1123date()<<Glove::CRLF;
+
+  // Server Signature
+  std::string serverSig = request.server()->simpleSignature();
+  if (!serverSig.empty())
+    client << "Server: "<<serverSig<<Glove::CRLF;
+
+  client << getHeaderVary();
+  client << "Content-Length: "<<outputStr.size()<<Glove::CRLF;
+  client << "Content-Type: "<<_contentType<<Glove::CRLF;
+  client << Glove::CRLF;
+  client << outputStr;
+}
+
+short GloveHttpResponse::file(std::string filename, bool addheaders)
+{
+  std::string extension = fileExtension(filename);
+  std::string fileContents = extractFile(filename.c_str());
+  if (fileContents.empty())
+    {
+      this->code(NOT_FOUND);
+      return FILE_CANNOT_READ;
+    }
+
+  *this << setContentType(GloveHttpServer::getMimeType(extension));
+  *this << fileContents;
+  return ALL_OK;
 }
 
 void GloveHttpResponse::clear()
@@ -470,6 +541,11 @@ std::string GloveHttpResponse::responseMessage(short responseCode)
     return _rc->second.message;
 
   return "";
+}
+
+std::string GloveHttpResponse::getHeaderVary()
+{
+  return "Vary: Accept-Encoding" + std::string(Glove::CRLF);
 }
 
 GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, std::vector<std::string> methods):
@@ -558,18 +634,34 @@ std::string GloveHttpServer::serverSignature(GloveHttpRequest& req)
 		      });
 }
 
+void GloveHttpServer::simpleSignature(std::string newSig)
+{
+  _simpleSignature = newSig;
+}
+
+std::string GloveHttpServer::simpleSignature()
+{
+  return _simpleSignature;
+}
+
 GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain):port(listenPort)
 {
   namespace ph = std::placeholders;
 
   _serverSignature = "Glove Http Server/" GHS_VERSION_STR " at {:serverHost} Port {:serverPort}";
-
+  _simpleSignature = "Glove Http Server/" GHS_VERSION_STR;
+  _defaultContentType = "text/html; charset=UTF-8";
   // addResponseProcessor(404, std::bind(&GloveHttpServer::response404Processor, this, ph::_1, ph::_2));
   addResponseProcessor(GloveHttpResponse::NOT_FOUND, GloveHttpServer::response404Processor);
+  // Errors 5XX
   addResponseGenericProcessor(GloveHttpResponse::INTERNAL_ERROR, GloveHttpServer::response5XXProcessor);
+  // Errors 4XX
+  addResponseGenericProcessor(GloveHttpResponse::BAD_REQUEST, GloveHttpServer::response4XXProcessor);
 
   addAutoResponse(RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
   messages = _defaultMessages;
+
+  initializeMetrics();
 
   server = new Glove(listenPort, 
   		     std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
@@ -590,6 +682,14 @@ GloveHttpServer::~GloveHttpServer()
     }
 }
 
+std::string GloveHttpServer::defaultContentType(std::string dct)
+{
+  if (!dct.empty())
+    _defaultContentType = dct;
+
+  return _defaultContentType;
+}
+
 void GloveHttpServer::addRoute(std::string route, url_callback callback, int maxArgs, std::vector<std::string> allowedMethods)
 {
   routes.push_back(GloveHttpUri(route, callback, maxArgs, allowedMethods));
@@ -602,7 +702,12 @@ void GloveHttpServer::addResponseProcessor(short errorCode, url_callback callbac
 
 void GloveHttpServer::addResponseGenericProcessor(short errorCode, url_callback callback)
 {
-  responseProcessors[-errorCode%100] = callback;
+  responseProcessors[-errorCode/100] = callback;
+}
+
+void GloveHttpServer::initializeMetrics()
+{
+  
 }
 
 bool GloveHttpServer::findRoute(std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special)
@@ -625,10 +730,11 @@ bool GloveHttpServer::findRoute(std::string method, GloveBase::uri uri, GloveHtt
 //   - https://github.com/r-lyeh/knot
 int GloveHttpServer::clientConnection(Glove::Client &client)
 {
+  auto startTime = std::chrono::steady_clock::now();
+
   std::cout << "Tengo un nuevo cliente" <<std::endl;
   std::cout << "IP: "<<client.get_address(true)<<std::endl;
   std::cout << "HOST: "<<client.get_host()<<std::endl;
-  std::cout << "SERVICE: "<<client.get_service()<<std::endl;
 
   std::string input, data, request_method, raw_location;
   std::map<std::string, std::string> httpheaders;
@@ -698,7 +804,6 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	      break;
 	    }
 
-	  std::cout << "RRR: "<<first_crlf-8-space_pos<<std::endl;
 	  if (first_crlf-8-space_pos<=0)
 	    {
 	      error = ERROR_MALFORMED_REQUEST;
@@ -731,21 +836,27 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       if (content_length > -1 && payload_received >= content_length)
 	receiving = false;
     }
+  auto requestTime = std::chrono::steady_clock::now();
+
   if ( (!error) && (receiving) )
     error = ERROR_TIMED_OUT;
 
   GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
-  GloveHttpResponse response(defaultContentType);
+  GloveHttpResponse response(_defaultContentType);
 
   if (error)
     {
-      std::cout << "TENGO ERR"<<std::endl;
       switch (error)
 	{
+	case ERROR_SHORT_REQUEST:
 	case ERROR_NO_URI:
-	  response>>GloveHttpResponse::setCode(GloveHttpResponse::BAD_REQUEST);
+	  response<<GloveHttpResponse::setCode(GloveHttpResponse::BAD_REQUEST);
+	  break;
 	case ERROR_BAD_PROTOCOL:
-	  response>>GloveHttpResponse::setCode(GloveHttpResponse::VERSION_NOT_SUP);
+	  response<<GloveHttpResponse::setCode(GloveHttpResponse::VERSION_NOT_SUP);
+	  break;
+	default:
+	  response<<GloveHttpResponse::setCode(GloveHttpResponse::INTERNAL_ERROR);
 	}
     }
   else
@@ -757,28 +868,30 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	}
       else
 	{
-	  response>>GloveHttpResponse::setCode(GloveHttpResponse::NOT_FOUND);
+	  response<<GloveHttpResponse::setCode(GloveHttpResponse::NOT_FOUND);
 	  // Test for error responses...
 	}
     }
-
   auto resproc = responseProcessors.find(response.code());
   if (resproc != responseProcessors.end())
     resproc->second(request, response);
   else
     {
-      //      std::cout << "GENERIC PROC ("<<std::to_string(-response.code()%100)<<")" <<std::endl;
       // Generic processors
-      resproc = responseProcessors.find(-response.code()%100);
+      resproc = responseProcessors.find(-response.code()/100);
       if (resproc != responseProcessors.end())
 	{
-	  std::cout << "LO TENGO "<<std::endl;
 	  resproc->second(request, response);
 	}
     }
   // request chrono, processing chrono..
-
-  response.send(client);
+  auto processingTime = std::chrono::steady_clock::now();
+  response.send(request, client);
+  auto responseTime = std::chrono::steady_clock::now();
+  addMetrics(request, (double) std::chrono::duration_cast<std::chrono::milliseconds>(requestTime - startTime).count() / 1000,
+	     (double) std::chrono::duration_cast<std::chrono::milliseconds>(processingTime - requestTime).count() / 1000,
+	     (double) std::chrono::duration_cast<std::chrono::milliseconds>(responseTime - requestTime).count() / 1000
+    );
 }
 
 void GloveHttpServer::gloveError(Glove::Client &client, int clientId, GloveException &e)
@@ -786,9 +899,42 @@ void GloveHttpServer::gloveError(Glove::Client &client, int clientId, GloveExcep
 
 }
 
+unsigned GloveHttpServer::version()
+{
+  return GHS_VERSION;
+}
+
+std::string GloveHttpServer::versionString()
+{
+  return GHS_VERSION_STR;
+}
+
+std::string GloveHttpServer::unknownMimeType(std::string nmt)
+{
+  if (!nmt.empty())
+    GloveHttpServer::_unknownMimeType = nmt;
+
+  return GloveHttpServer::_unknownMimeType;
+}
+
+void GloveHttpServer::addMimeType(std::string extension, std::string mimeType)
+{
+  GloveHttpServer::_mimeTypes.insert({extension, mimeType});
+}
+
+
 void GloveHttpServer::fileServer(GloveHttpRequest &request, GloveHttpResponse& response)
 {
-  response<<extractFile(request.special["filename"].c_str());
+  response.file(request.special["filename"]);
+}
+
+std::string GloveHttpServer::getMimeType(std::string extension)
+{
+  auto f = GloveHttpServer::_mimeTypes.find(extension);
+  if (f != GloveHttpServer::_mimeTypes.end())
+    return f->second;
+
+  return GloveHttpServer::GloveHttpServer::_unknownMimeType;
 }
 
 void GloveHttpServer::responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response)
@@ -804,6 +950,11 @@ void GloveHttpServer::responseGenericError(GloveHttpRequest& request, GloveHttpR
 }
 
 void GloveHttpServer::response5XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response)
+{
+  responseGenericError(request, response);
+}
+
+void GloveHttpServer::response4XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response)
 {
   responseGenericError(request, response);
 }
@@ -846,4 +997,16 @@ std::string GloveHttpServer::responseMsg(short id, std::string msg)
     messages[id] = msg;
 
   return msg;
+}
+
+void GloveHttpServer::addMetrics(GloveHttpRequest& request, double queryTime, double processingTime, double responseTime)
+{
+  ++metrics.hits;
+  metrics.totalQueryTime+=queryTime;
+  metrics.totalProcessingTime+=processingTime;
+  metrics.totalResponseTime+=responseTime;
+
+  std::cout << "Petición: "<<queryTime<<"s. T:"<<metrics.totalQueryTime<<"."<<std::endl;
+  std::cout << "Procesamiento: "<<processingTime<<"s. T:"<<metrics.totalProcessingTime<<"."<<std::endl;
+  std::cout << "Respuesta: "<<responseTime<<"s. T:"<<metrics.totalResponseTime<<"."<<std::endl;
 }
