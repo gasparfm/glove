@@ -9,15 +9,24 @@
 * @date 03 apr 2015
 *
 * Notes:
-*  - Based on ideas taken on some PHP Frameworks, Java Servlets and more
+*  - Based on ideas taken on some PHP Frameworks, Java Servlets 
+*    and more. Not intended to use it on big or public websites.
+*    Just to use it in an internal and controlled way.
 *
 * Changelog:
 *  20150403 : Begin this project
-*  20140404 : Added HTTP Response data
-*  20150410 : 
+*  20150404 : Added HTTP Response data
+*  20150410 : Some bug fixing
+*  20150410 : Errors separated to GloveHttpErrors
+*  20150411 : Basic virtualHost support
 * 
 * To-do:
-*   - Loooots of things
+*   - Error checking for addResponseProcessor() and addResponseGenericProcessor()
+*   - Error checking for addAutoResponse() and autoResponses()
+*   - Error checking for addRoute()
+*   - Metrics into virtualhosts
+*   - Documentation !!
+*   - Loooots of things more and RFCs compliances
 *   - Max. size of strings
 *   - Size test of strings
 *   - Be able to process FastCGI requests to use with Apache/NGinx and more
@@ -242,9 +251,19 @@ const std::string GloveHttpResponse::defaultResponseTemplate = "<!DOCTYPE HTML P
 "</body>\n"
 "</html>";
 
-const short GloveHttpResponse::ALL_OK = 0;
+const short GloveHttpErrors::ALL_OK = 0;
 // file() could not read the file. 404 returned if addheaders=true
-const short GloveHttpResponse::FILE_CANNOT_READ = 1;
+const short GloveHttpErrors::FILE_CANNOT_READ = 1;
+const short GloveHttpErrors::BAD_HOST_NAME = 10;
+const short GloveHttpErrors::BAD_ALIAS_NAME = 11;
+const short GloveHttpErrors::HOST_NOT_FOUND = 12;
+const short GloveHttpErrors::HOST_ALREADY_FOUND = 13;
+const short GloveHttpErrors::ERROR_SHORT_REQUEST = 20;
+const short GloveHttpErrors::ERROR_NO_URI = 21;
+const short GloveHttpErrors::ERROR_MALFORMED_REQUEST = 22;
+const short GloveHttpErrors::ERROR_TIMED_OUT = 30;
+const short GloveHttpErrors::ERROR_BAD_PROTOCOL = 45;
+
 
 const short GloveHttpServer::RESPONSE_ERROR = 404;
 const short GloveHttpServer::MESSAGE_NOTFOUND = 666;
@@ -257,6 +276,10 @@ std::map<std::string, std::string> GloveHttpServer::_mimeTypes = {
 const std::map<short, std::string> GloveHttpServer::_defaultMessages = {
   { MESSAGE_NOTFOUND, "The requested URL {:urlcut} was not found on this server" }
 };
+
+// Default vhost name (internal setting)
+const std::string GloveHttpServer::defaultVhostName = "%";
+
 namespace
 {
   const std::string white_spaces( " \f\n\r\t\v" );
@@ -381,6 +404,12 @@ namespace
     return s;
   }
 
+  // Testing
+  bool validHost(std::string hostName)
+  {
+    static const char* validChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.";
+    return (hostName.find_first_not_of(validChars) == std::string::npos);
+  }
 };
 
 GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort):
@@ -446,6 +475,12 @@ std::string GloveHttpRequest::getHeader(std::string h) const
     return el->second;
 
   return "";
+}
+
+std::string GloveHttpRequest::getVhost()
+{
+  auto headervhost = getHeader("Host");
+  return srv->getVhostName(headervhost);
 }
 
 GloveBase::uri GloveHttpRequest::getUri() const
@@ -521,12 +556,12 @@ short GloveHttpResponse::file(std::string filename, bool addheaders)
   if (fileContents.empty())
     {
       this->code(NOT_FOUND);
-      return FILE_CANNOT_READ;
+      return GloveHttpErrors::FILE_CANNOT_READ;
     }
 
   *this << setContentType(GloveHttpServer::getMimeType(extension));
   *this << fileContents;
-  return ALL_OK;
+  return GloveHttpErrors::ALL_OK;
 }
 
 void GloveHttpResponse::clear()
@@ -644,6 +679,102 @@ std::string GloveHttpServer::simpleSignature()
   return _simpleSignature;
 }
 
+short GloveHttpServer::addVhost(std::string name, std::vector<std::string> aliases)
+{
+  if ( (!validHost(name)) && (name != defaultVhostName) )
+    return GloveHttpErrors::BAD_HOST_NAME;
+
+  // If vhost is found, can't be repeated
+  if (vhosts.find(name) != vhosts.end())
+    return GloveHttpErrors::HOST_ALREADY_FOUND;
+
+  for (auto al : aliases)
+    {
+      if (!validHost(al))
+	return GloveHttpErrors::BAD_ALIAS_NAME;
+    }
+
+  vhosts.insert({name, VirtualHost()});
+  vhosts_aliases.insert({name, "@"});
+
+  for (auto al : aliases)
+    vhosts_aliases.insert({name, al});
+
+  addResponseProcessor(name, GloveHttpResponse::NOT_FOUND, GloveHttpServer::response404Processor);
+  // Errors 5XX
+  addResponseGenericProcessor(name, GloveHttpResponse::INTERNAL_ERROR, GloveHttpServer::response5XXProcessor);
+  // Errors 4XX
+  addResponseGenericProcessor(name, GloveHttpResponse::BAD_REQUEST, GloveHttpServer::response4XXProcessor);
+
+  addAutoResponse(name, RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
+  messages = _defaultMessages;
+
+  return GloveHttpErrors::ALL_OK;
+}
+
+short GloveHttpServer::addVhostAlias(std::string name, std::string alias)
+{
+  if (vhosts.find(name) == vhosts.end())
+    return GloveHttpErrors::HOST_NOT_FOUND;
+
+  if (!validHost(alias))
+    return GloveHttpErrors::BAD_ALIAS_NAME;
+
+  vhosts_aliases.insert({name, alias});
+}
+
+short GloveHttpServer::addVhostAlias(std::string name, std::vector<std::string> aliases)
+{
+  if (vhosts.find(name) == vhosts.end())
+    return GloveHttpErrors::HOST_NOT_FOUND;
+
+  for (auto al : aliases)
+    {
+      if (!validHost(al))
+	return GloveHttpErrors::BAD_ALIAS_NAME;
+    }
+
+  for (auto al : aliases)
+    vhosts_aliases.insert({name, al});
+
+  return GloveHttpErrors::ALL_OK;
+}
+
+std::string GloveHttpServer::getVhostName(std::string vh)
+{
+  // Ignore port in Host header
+  if (vh.find(":") != std::string::npos)
+    vh = vh.substr(0, vh.find(":"));
+
+  // If empty name, return default vhost
+  if (vh.empty())
+    return defaultVhostName;
+
+  // If host is invalid, return default
+  if (!validHost(vh))
+    return defaultVhostName;
+
+  for (auto valiases : vhosts_aliases)
+    {
+      if (valiases.first == vh)
+	{
+	  return (valiases.second == "@")?valiases.first:valiases.second;
+	}
+    }
+
+  // If host not found, return default vhost
+  return defaultVhostName;
+}
+
+GloveHttpServer::VirtualHost* GloveHttpServer::getVHost(std::string name)
+{
+  auto h = vhosts.find(name);
+  if (h != vhosts.end())
+    return &h->second;
+
+  return NULL;
+}
+
 GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain):port(listenPort)
 {
   namespace ph = std::placeholders;
@@ -651,15 +782,18 @@ GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size
   _serverSignature = "Glove Http Server/" GHS_VERSION_STR " at {:serverHost} Port {:serverPort}";
   _simpleSignature = "Glove Http Server/" GHS_VERSION_STR;
   _defaultContentType = "text/html; charset=UTF-8";
-  // addResponseProcessor(404, std::bind(&GloveHttpServer::response404Processor, this, ph::_1, ph::_2));
-  addResponseProcessor(GloveHttpResponse::NOT_FOUND, GloveHttpServer::response404Processor);
-  // Errors 5XX
-  addResponseGenericProcessor(GloveHttpResponse::INTERNAL_ERROR, GloveHttpServer::response5XXProcessor);
-  // Errors 4XX
-  addResponseGenericProcessor(GloveHttpResponse::BAD_REQUEST, GloveHttpServer::response4XXProcessor);
 
-  addAutoResponse(RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
-  messages = _defaultMessages;
+  if (addVhost("%") != GloveHttpErrors::ALL_OK)
+    return;
+
+  // addResponseProcessor(GloveHttpResponse::NOT_FOUND, GloveHttpServer::response404Processor);
+  // // Errors 5XX
+  // addResponseGenericProcessor(GloveHttpResponse::INTERNAL_ERROR, GloveHttpServer::response5XXProcessor);
+  // // Errors 4XX
+  // addResponseGenericProcessor(GloveHttpResponse::BAD_REQUEST, GloveHttpServer::response4XXProcessor);
+
+  // addAutoResponse(RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
+  // messages = _defaultMessages;
 
   initializeMetrics();
 
@@ -690,19 +824,40 @@ std::string GloveHttpServer::defaultContentType(std::string dct)
   return _defaultContentType;
 }
 
-void GloveHttpServer::addRoute(std::string route, url_callback callback, int maxArgs, std::vector<std::string> allowedMethods)
+void GloveHttpServer::addRoute(std::string route, url_callback callback, std::string host, int maxArgs, std::vector<std::string> allowedMethods)
 {
-  routes.push_back(GloveHttpUri(route, callback, maxArgs, allowedMethods));
+  auto vhost = getVHost(host);
+  vhost->routes.push_back(GloveHttpUri(route, callback, maxArgs, allowedMethods));
 }
 
 void GloveHttpServer::addResponseProcessor(short errorCode, url_callback callback)
 {
-  responseProcessors[errorCode] = callback;
+  // Single vhost old line
+  // responseProcessors[errorCode] = callback;
+
+  auto vhost = getVHost(defaultVhostName);
+  vhost->responseProcessors[errorCode] = callback;
 }
 
 void GloveHttpServer::addResponseGenericProcessor(short errorCode, url_callback callback)
 {
-  responseProcessors[-errorCode/100] = callback;
+  // Single vhost old line
+  // responseProcessors[-errorCode/100] = callback;
+
+  auto vhost = getVHost(defaultVhostName);
+  vhost->responseProcessors[-errorCode/100] = callback;
+}
+
+void GloveHttpServer::addResponseProcessor(std::string host, short errorCode, url_callback callback)
+{
+  auto vhost = getVHost(host);
+  vhost->responseProcessors[errorCode] = callback;
+}
+
+void GloveHttpServer::addResponseGenericProcessor(std::string host, short errorCode, url_callback callback)
+{
+  auto vhost = getVHost(host);
+  vhost->responseProcessors[-errorCode/100] = callback;
 }
 
 void GloveHttpServer::initializeMetrics()
@@ -710,9 +865,9 @@ void GloveHttpServer::initializeMetrics()
   
 }
 
-bool GloveHttpServer::findRoute(std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special)
+bool GloveHttpServer::findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special)
 {
-  for (auto r = routes.begin(); r!=routes.end(); ++r)
+  for (auto r = vhost.routes.begin(); r!=vhost.routes.end(); ++r)
     {
       special.clear();
       if (r->match(method, uri, special))
@@ -732,9 +887,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 {
   auto startTime = std::chrono::steady_clock::now();
 
-  std::cout << "Tengo un nuevo cliente" <<std::endl;
   std::cout << "IP: "<<client.get_address(true)<<std::endl;
-  std::cout << "HOST: "<<client.get_host()<<std::endl;
 
   std::string input, data, request_method, raw_location;
   std::map<std::string, std::string> httpheaders;
@@ -781,7 +934,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 
 	  if ( first_crlf < 9 )
 	    {
-	      error = ERROR_SHORT_REQUEST;
+	      error = GloveHttpErrors::ERROR_SHORT_REQUEST;
 	      break;
 	    }
 
@@ -789,7 +942,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	  space_pos = input.find(' ');
 	  if (space_pos == std::string::npos)
 	    {
-	      error = ERROR_NO_URI;
+	      error = GloveHttpErrors::ERROR_NO_URI;
 	      break;
 	    }
 
@@ -800,13 +953,13 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	  // a tiny web service
 	  if( input.substr( first_crlf - 8, 8) != "HTTP/1.1" )
 	    {
-	      error = ERROR_BAD_PROTOCOL;
+	      error = GloveHttpErrors::ERROR_BAD_PROTOCOL;
 	      break;
 	    }
 
 	  if (first_crlf-8-space_pos<=0)
 	    {
-	      error = ERROR_MALFORMED_REQUEST;
+	      error = GloveHttpErrors::ERROR_MALFORMED_REQUEST;
 	      break;
 	    }
 
@@ -839,20 +992,20 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
   auto requestTime = std::chrono::steady_clock::now();
 
   if ( (!error) && (receiving) )
-    error = ERROR_TIMED_OUT;
+    error = GloveHttpErrors::ERROR_TIMED_OUT;
 
   GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
   GloveHttpResponse response(_defaultContentType);
-
+  auto vhost = getVHost(request.getVhost());
   if (error)
     {
       switch (error)
 	{
-	case ERROR_SHORT_REQUEST:
-	case ERROR_NO_URI:
+	case GloveHttpErrors::ERROR_SHORT_REQUEST:
+	case GloveHttpErrors::ERROR_NO_URI:
 	  response<<GloveHttpResponse::setCode(GloveHttpResponse::BAD_REQUEST);
 	  break;
-	case ERROR_BAD_PROTOCOL:
+	case GloveHttpErrors::ERROR_BAD_PROTOCOL:
 	  response<<GloveHttpResponse::setCode(GloveHttpResponse::VERSION_NOT_SUP);
 	  break;
 	default:
@@ -862,7 +1015,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
   else
     {
       GloveHttpUri *guri;
-      if (findRoute(request_method, request.getUri(), guri, request.special))
+      if (findRoute(*vhost, request_method, request.getUri(), guri, request.special))
 	{
 	  guri->callAction(request, response);
 	}
@@ -872,14 +1025,14 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	  // Test for error responses...
 	}
     }
-  auto resproc = responseProcessors.find(response.code());
-  if (resproc != responseProcessors.end())
+  auto resproc = vhost->responseProcessors.find(response.code());
+  if (resproc != vhost->responseProcessors.end())
     resproc->second(request, response);
   else
     {
       // Generic processors
-      resproc = responseProcessors.find(-response.code()/100);
-      if (resproc != responseProcessors.end())
+      resproc = vhost->responseProcessors.find(-response.code()/100);
+      if (resproc != vhost->responseProcessors.end())
 	{
 	  resproc->second(request, response);
 	}
@@ -940,7 +1093,7 @@ std::string GloveHttpServer::getMimeType(std::string extension)
 void GloveHttpServer::responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response)
 {
   response.clear();
-  response << string_replace(request.server()->autoResponses(GloveHttpServer::RESPONSE_ERROR),
+  response << string_replace(request.server()->autoResponses(request.getVhost(), GloveHttpServer::RESPONSE_ERROR),
 		      {
 			{"{:title}", std::to_string(response.code())+" "+response.responseMessage()},
 			{"{:header}", response.responseMessage()},
@@ -962,7 +1115,7 @@ void GloveHttpServer::response4XXProcessor(GloveHttpRequest& request, GloveHttpR
 void GloveHttpServer::response404Processor(GloveHttpRequest& request, GloveHttpResponse& response)
 {
   response.clear();
-  response << string_replace(request.server()->autoResponses(GloveHttpServer::RESPONSE_ERROR),
+  response << string_replace(request.server()->autoResponses(request.getVhost(), GloveHttpServer::RESPONSE_ERROR),
 		      {
 			{"{:title}", "404 Not Found"},
 			{"{:header}", "Not Found"},
@@ -971,19 +1124,33 @@ void GloveHttpServer::response404Processor(GloveHttpRequest& request, GloveHttpR
 		      });
 }
 
-void GloveHttpServer::addAutoResponse(short id, std::string response)
+void GloveHttpServer::addAutoResponse(std::string host, short id, std::string response)
 {
-  _autoResponses[id] = response;
+  auto vhost = getVHost(host);
+  vhost->_autoResponses[id] = response;
 }
 
-std::string GloveHttpServer::autoResponses(short responseId)
+std::string GloveHttpServer::autoResponses(std::string host, short responseId)
 {
-  auto rit = _autoResponses.find(responseId);
-  if (rit!=_autoResponses.end())
+  auto vhost = getVHost(host);
+
+  auto rit = vhost->_autoResponses.find(responseId);
+  if (rit!=vhost->_autoResponses.end())
     return rit->second;
 
   return "";
 }
+
+void GloveHttpServer::addAutoResponse(short id, std::string response)
+{
+  addAutoResponse(defaultVhostName, id, response);
+}
+
+std::string GloveHttpServer::autoResponses(short responseId)
+{
+  return autoResponses(defaultVhostName, responseId);
+}
+
 
 std::string GloveHttpServer::responseMsg(short id, std::string msg)
 {
@@ -1006,7 +1173,7 @@ void GloveHttpServer::addMetrics(GloveHttpRequest& request, double queryTime, do
   metrics.totalProcessingTime+=processingTime;
   metrics.totalResponseTime+=responseTime;
 
-  std::cout << "Petición: "<<queryTime<<"s. T:"<<metrics.totalQueryTime<<"."<<std::endl;
-  std::cout << "Procesamiento: "<<processingTime<<"s. T:"<<metrics.totalProcessingTime<<"."<<std::endl;
-  std::cout << "Respuesta: "<<responseTime<<"s. T:"<<metrics.totalResponseTime<<"."<<std::endl;
+  std::cout << "Request: "<<queryTime<<"s. T:"<<metrics.totalQueryTime<<"."<<std::endl;
+  std::cout << "Processing: "<<processingTime<<"s. T:"<<metrics.totalProcessingTime<<"."<<std::endl;
+  std::cout << "Answer: "<<responseTime<<"s. T:"<<metrics.totalResponseTime<<"."<<std::endl;
 }

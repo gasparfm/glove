@@ -14,6 +14,40 @@
 
 class GloveHttpServer;
 
+class GloveHttpErrors
+{
+ public:
+  static const short ALL_OK;
+
+  /* Response errors GloveHttpResponse */
+  /* action error codes */
+  static const short FILE_CANNOT_READ;
+
+  /* Vhost errors */
+
+  /* The specified host is not valid. Not for clients. */
+  static const short BAD_HOST_NAME;
+  /* When you try to create a new alias */
+  static const short BAD_ALIAS_NAME;
+  /* When you try to retrieve host information */
+  static const short HOST_NOT_FOUND;
+  /* When you try to create an existing vhost */
+  static const short HOST_ALREADY_FOUND;
+
+  /* Url retrieving errors GloveHttpServer */
+  /* Request line is too short to have needed information */
+  static const short ERROR_SHORT_REQUEST;
+  /* Request has not URI: There's no space after the METHOD */
+  static const short ERROR_NO_URI;
+  /* Malformed request string */
+  static const short ERROR_MALFORMED_REQUEST;
+  /* Timeout when receiving data from client */
+  static const short ERROR_TIMED_OUT;
+  /* Server request is not a valid HTTP/1.1 request */
+  static const short ERROR_BAD_PROTOCOL;
+
+};
+
 class GloveHttpRequest
 {
  public:
@@ -29,6 +63,7 @@ class GloveHttpRequest
   std::string getData() const;
   std::map<std::string, std::string> getHeaders() const;
   std::string getHeader(std::string h) const;
+  std::string getVhost();
   GloveBase::uri getUri() const;
   
   inline GloveHttpServer* server() const
@@ -223,10 +258,6 @@ class GloveHttpResponse
 
   /* Response templates */
   static const std::string defaultResponseTemplate;
-
-  /* action error codes */
-  static const short ALL_OK;
-  static const short FILE_CANNOT_READ;
  private:
   std::stringstream output;
   short _responseCode;
@@ -277,16 +308,25 @@ class GloveHttpServer
   std::string serverSignature(GloveHttpRequest& req);
   void simpleSignature(std::string newSig);
   std::string simpleSignature();
+  /* Get vhost name */
+  short addVhost(std::string name, std::vector<std::string> aliases={});
+  short addVhostAlias(std::string name, std::string alias);
+  short addVhostAlias(std::string name, std::vector<std::string> aliases);
+  std::string getVhostName(std::string vh);
 
   /* rename: responseTemplates */
   std::string autoResponses(short responseId);
   void addAutoResponse(short id, std::string response);
+  std::string autoResponses(std::string vhost, short responseId);
+  void addAutoResponse(std::string vhost, short id, std::string response);
 
-  void addRoute(std::string route, url_callback callback, int maxArgs=-1, std::vector<std::string> allowedMethods = StandardMethods);
+  void addRoute(std::string route, url_callback callback, std::string vhost=defaultVhostName, int maxArgs=-1, std::vector<std::string> allowedMethods = StandardMethods);
   /* Note, it will add it on any errorCode, right or wrong.
    Use with caution */
   void addResponseProcessor(short errorCode, url_callback callback);
   void addResponseGenericProcessor(short errorCode, url_callback callback);
+  void addResponseProcessor(std::string vhost, short errorCode, url_callback callback);
+  void addResponseGenericProcessor(std::string vhost, short errorCode, url_callback callback);
 
   /* Information */
   unsigned version();
@@ -305,20 +345,6 @@ class GloveHttpServer
   static void response4XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response);
   static void response5XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response);
   static void responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response);
-
-  /* Errors */
-
-  /* Request line is too short to have needed information */
-  static const int ERROR_SHORT_REQUEST = 20;
-  /* Request has not URI: There's no space after the METHOD */
-  static const int ERROR_NO_URI = 21;
-  /* Malformed request string */
-  static const int ERROR_MALFORMED_REQUEST = 22;
-  /* Timeout when receiving data from client */
-  static const int ERROR_TIMED_OUT = 30;
-
-  /* Server request is not a valid HTTP/1.1 request */
-  static const int ERROR_BAD_PROTOCOL = 45;
 
   /* Response messages */
   std::string responseMsg(short id, std::string msg="");
@@ -345,6 +371,10 @@ class GloveHttpServer
   {
     std::string name;
 
+    std::vector<GloveHttpUri> routes;
+    std::map<short, url_callback> responseProcessors;
+    std::map<short, std::string> _autoResponses;
+    std::map<short, std::string> messages;
   };
 
   Glove *server = NULL;
@@ -352,12 +382,14 @@ class GloveHttpServer
   std::map<std::string, VirtualHost> vhosts;
   /* The alias and the name will be here, when a request come,
      the host will be searched here. */
-  std::map<std::string, VirtualHost*> vhosts_aliases;
+  std::map<std::string, std::string> vhosts_aliases;
   std::vector<GloveHttpUri> routes;
   std::map<short, url_callback> responseProcessors;
   std::map<short, std::string> _autoResponses;
   std::map<short, std::string> messages;
   static const std::map<short, std::string> _defaultMessages;
+  static const std::string defaultVhostName;
+
   int port;
   std::string _serverSignature; 
   std::string _simpleSignature;
@@ -366,10 +398,10 @@ class GloveHttpServer
   Httpmetrics metrics;
 
   void initializeMetrics();
-  bool findRoute(std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
+  bool findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
   int clientConnection(Glove::Client &client);
   void gloveError(Glove::Client &client, int clientId, GloveException &e);
-
+  VirtualHost* getVHost(std::string name);
   void addMetrics(GloveHttpRequest& request, double queryTime, double processingTime, double responseTime);
 };
 
