@@ -12,18 +12,23 @@
 *  - Some code borrowed from r-lyeh's knot ( https://github.com/r-lyeh/knot )
 *  - urlencode/urldecode borrowed from knot base on code by Fred Bulback
 *  - base64 encode/decode functions by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
+*  - send() and recv() are called just once, so we can replace these functions
 *
 * Changelog:
-*  20140807 : Begin this project
-*  20140908 : Now, it can be a server
-*  20140913 : Created GloveBase, deleted Util namespace and duplicated code
-*  20140914 : Some bugfixing and Glove constructors
-*  20140919 : build_uri(), better test_connected()
-*  20140923 : get_from_uri() - The unmaintainable!
+*  20150501 : Fixed resolveHost() to resolve IPv6 and IPv4, whatever it comes to it.
+*  20150501 : Bug fixing on flag manipulations. Added functions and manipulators for exceptions
+*  20150430 : some more more doc for Doxygen (in glove.hpp) (I'd like to comment everything)
+*  20150425 : some more doc for Doxygen (in glove.hpp)
+*  20150418 : some doc for Doxygen (in glove.hpp)
 *  20150404 : urlencode/urldecode/base64 encode/base64 decode helpers
+*  20140923 : get_from_uri() - The unmaintainable!
+*  20140919 : build_uri(), better test_connected()
+*  20140914 : Some bugfixing and Glove constructors
+*  20140913 : Created GloveBase, deleted Util namespace and duplicated code
+*  20140908 : Now, it can be a server
+*  20140807 : Begin this project
 *
 * To-do:
-*  1 - Some more documentation
 *  2 - epoll support
 *  6 - be able to connect with protocol/service names
 *  7 - set_option(...) allowing a variadic template to set every client or server option
@@ -68,21 +73,40 @@
 #include <netdb.h>
 #include <unistd.h>
 
+/** Initialization (if any), it was intended to be cross-platform, but time
+ goes by and I needed to get this lib in a decent point for Linux. So I didn't
+ care about Windows.
+*/
 #define INIT()                    
+/**
+ * Calls socket()
+ */
 #define SOCKET(A,B,C)             ::socket((A),(B),(C))
+/** Calls accept()  */
 #define ACCEPT(A,B,C)             ::accept((A),(B),(C))
+/** Calls connect()  */
 #define CONNECT(A,B,C)            ::connect((A),(B),(C))
+/** Calls close()  */
 #define CLOSE(A)                  ::close((A))
+/** Calls read()  */
 #define READ(A,B,C)               ::read((A),(B),(C))
+/** Calls recv()  */
 #define RECV(A,B,C,D)             ::recv((A), (void *)(B), (C), (D))
+/** Calls select()  */
 #define SELECT(A,B,C,D,E)         ::select((A),(B),(C),(D),(E))
+/** Calls send()  */
 #define SEND(A,B,C,D)             ::send((A), (const char *)(B), (C), (D))
+/** Calls write()  */
 #define WRITE(A,B,C)              ::write((A),(B),(C))
+/** Calls getsockopt()  */
 #define GETSOCKOPT(A,B,C,D,E)     ::getsockopt((int)(A),(int)(B),(int)(C),(      void *)(D),(socklen_t *)(E))
+/** Calls setsockopt()  */
 #define SETSOCKOPT(A,B,C,D,E)     ::setsockopt((int)(A),(int)(B),(int)(C),(const void *)(D),(socklen_t)(E))
-
+/** Calls bind()  */
 #define BIND(A,B,C)               ::bind((A),(B),(C))
+/** Calls listen()  */
 #define LISTEN(A,B)               ::listen((A),(B))
+/** Calls shutdown()  */
 #define SHUTDOWN(A,B)             ::shutdown((A),(B))
 
 
@@ -245,7 +269,6 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
       std::string buffer(__buffer_size, '\0');
 
       bytes_received = RECV (sockfd, &buffer[0], buffer.size(), 0);
-
       if (bytes_received < 0)
 	throw GloveException(9, append_errno("Error receiving data: "));
 
@@ -808,13 +831,13 @@ std::vector < Glove::hostinfo > Glove::resolveHost(const std :: string & host)
 
   for (rp = servinfo; rp != NULL; rp = rp->ai_next) {
     char hostname[NI_MAXHOST];
-    char ipaddress[INET_ADDRSTRLEN];
+    char ipaddress[INET6_ADDRSTRLEN];
 
     error = getnameinfo(rp->ai_addr, rp->ai_addrlen, hostname, NI_MAXHOST, NULL, 0, 0); 
     if (error != 0)
       throw GloveException(2, append_errno("Failed to resolve: "));
 
-    if ( inet_ntop(AF_INET,  &((sockaddr_in *)rp->ai_addr)->sin_addr, ipaddress, INET_ADDRSTRLEN) == NULL)
+    if ( inet_ntop(rp->ai_family,  &((sockaddr_in *)rp->ai_addr)->sin_addr, ipaddress, INET6_ADDRSTRLEN) == NULL)
       throw GloveException(3, "Cannot get IP address");
 
     res.push_back({hostname, ipaddress});
@@ -878,7 +901,7 @@ bool Glove::is_connected()
   if (!connected)
     return false;
 
-  int res = recv(sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+  int res = RECV(sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
   if (res<0)
     {
       // Maybe disconnected or maybe not...

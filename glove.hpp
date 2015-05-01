@@ -1,5 +1,8 @@
-/* @(#)glove.hpp
- */
+/**
+*************************************************************
+* @file glove.hpp
+* @brief Tiny and standalone TCP socket C++11 wrapper and more
+*************************************************************/
 
 #ifndef _GLOVE_HPP
 #define _GLOVE_HPP 10
@@ -17,11 +20,35 @@
 #include <algorithm>
 #include <sys/socket.h>
 
+/**
+   Default timeout (in seconds)for all connections. Maybe you want to increase it a little bit,
+   for testing, 1second was enough.
+ */
 #define GLOVE_DEFAULT_TIMEOUT 1
+
+/**
+   Default domain. AF_INET for ipv4, AF_INET6 por ipv6. @see inet_pton() manual 
+ */
 #define GLOVE_DEFAULT_DOMAIN AF_INET
+
+/**
+   Default reception buffer size.
+ */
 #define GLOVE_DEFAULT_BUFFER_SIZE 2048
+
+/**
+   Default max simultaneous clients for server mode
+ */
 #define GLOVE_DEFAULT_MAX_CLIENTS 10
+
+/**
+   If max clients is reached, will change accept() by a sleep
+ */
 #define GLOVE_DEFAULT_ACCEPT_WAIT 2000
+
+/**
+   Default backlog queue for listen()
+ */
 #define GLOVE_DEFAULT_BACKLOG_QUEUE 10
 
 namespace
@@ -33,9 +60,21 @@ namespace
   typedef ostream_type& (*ostream_manipulator)(ostream_type&);
 };
 
+/**
+   General exceptions will be this type. It's a simple exception class, just with a code
+   and message.
+ */
 class GloveException : public std::exception
 {
 public:
+
+  /**
+   * GloveException
+   *
+   * @param code      Error code
+   * @param message   Error message
+   *
+   */
   GloveException(const int& code, const std::string &message): _code(code), _message(message)
   {
   }
@@ -44,24 +83,44 @@ public:
   {
   }
 
+  /**
+   * Exception message int char*
+   */
   const char* what() const throw()
   {
     return _message.c_str();
   }
 
+  /**
+   * Exception error code
+   *
+   * @return error code
+   */
   int code() const
   {
     return _code;
   }
 
 protected:
+  /** Error code */
   int _code;
+  /** Error message  */
   std::string _message;
 };
 
+/**
+   URI exceptions. Fails addressing a resource
+ */
 class GloveUriException : public GloveException
 {
 public:
+  /**
+   * GloveUriException
+   *
+   * @param code      Error code
+   * @param message   Error message
+   *
+   */
   GloveUriException(const int& code, const std::string &message): GloveException(code, message)
   {
   }
@@ -71,57 +130,132 @@ public:
   }
 };
 
+/**
+   Glove Base class for clients and servers with, I hope, all the common stuff.
+ */
 class GloveBase
 {
 public:
+  /**
+     Controls the behaviour of select()
+   */
   enum:int
     {
+      /**
+       * GloveBase::select() will use read sockets
+       */
       SELECT_READ=1,
+
+      /**
+       * GloveBase::select() will use write sockets
+       */
       SELECT_WRITE=2
     };
+
+  /**
+   * shutdown() behaviour control
+   */
   enum
     {
+      /**
+       * Shutdown read
+       */
       SHUT_R = SHUT_RD,
+      /**
+       * Shutdown write
+       */
       SHUT_W = SHUT_WR,
+      /**
+       * Shutdown read-write
+       */
       SHUT_RW= SHUT_RDWR,
+      /**
+       * Don't use shutdown, use close
+       */
       SHUT_XX
     };
+
+  /**
+   * Exception generation options
+   */
   enum:unsigned
     {
+      /** Don't generate exceptions  */
       EXCEPTION_NONE = 0,
+      /** Generate exception on timeout. 
+	  Will be thrown on data receptions  */
       EXCEPTION_TIMEOUT = 1,	     // on reception
+      /** Generate exception on peer disconnection.  */
       EXCEPTION_PEERDISCONNECT = 2,  // as client / server
+      /** Generate exception on peer disconnection (new). Will
+	  be thrown when receiving data*/
       EXCEPTION_DISCONNECTED = 4,    // mostly as client
+      /** Generate all exceptions  */
       EXCEPTION_ALL = 65535
     };
 
+  /**
+   * Filters can be done before sending data of after receiving data
+   */
   enum filter_type
     {
+      /** Filter before sending data */
       FILTER_INPUT,
+      /** Filter after receiving data  */
       FILTER_OUTPUT
     };
+
+  /** 
+   * Little structure with host information
+   */
   struct hostinfo
   {
+    /** Host name  */
     std::string host;
+    /** IP address  */
     std::string ip_address;
+    /** Service from /etc/services obtained with getservbyname()  */
     std::string service;
   };
 
+  /**
+     Uri components
+   */
   struct uri
   {
+    /** uri string  */
     std::string uri;
+    /** host part */
     std::string host;
+    /** every frament of the path: service.com/a/b/c => [] = a; [] = b; [] = c */
     std::vector < std::string > path;
+    /** Path only => a/b/C  */
     std::string rawpath;
+    /** Raw arguments of path: service.com/a/b?arg1=value1&arg2=value2 => arg1=value1&arg2=value2 */
     std::string rawarguments;
-    std::map<std::string, std::string> arguments; // you can choose argument start character (?), argument separator character (;) and argument assign character (=)
+    /** arguments map => [arg1] = value1; [arg2] = value2  */
+    /** NOT YET: you can choose argument start character (?), argument separator character (;) and argument assign character (=) */
+    std::map<std::string, std::string> arguments;
+    /** service used  */
     std::string service;
+    /** URI fragment: service.com/a/b/c?arg1=value1#fragment  */
     std::string fragment;
+    /** Username used  */
     std::string username;
+    /** Password used  */
     std::string password;
+    /** List of hosts resolved by this host  */
     std::vector <GloveBase::hostinfo> ressolvedhosts;
+    /** Port  */
     int port;
 
+    /**
+     * DEBUG Only: used to get information about this URI, to print on
+     *       screen/write to a file/etc, but not a suitable format for
+     *       end users
+     *
+     * @return String with all the information
+     */
     std::string uridebug()
     {
       std::string out = "URI: "+uri+"\n";
@@ -141,38 +275,81 @@ public:
       return out;
     }
   };
+
+  /** CRLF string => "\r\n" */
   static const char* CRLF;
 
+  /**
+   * Default constructor with the default values:
+   *   Timeout = @see GLOVE_DEFAULT_TIMEOUT
+   *   Exceptions = @see EXCEPTION_ALL
+   *   Timeout when data = false
+   *   Read once = false (Do all the neccessary read operations)
+   *   Fixed read = 0 (unlimited read with operator <<)
+   *   Buffer_size = @see GLOVE_DEFAULT_BUFFER_SIZE
+   *   Input filters enabled
+   *   Output filters enabled
+   */
   GloveBase(): default_values({GLOVE_DEFAULT_TIMEOUT, EXCEPTION_ALL, false, false, 0, GLOVE_DEFAULT_BUFFER_SIZE, true, true})
   {
   }
 
+  /** 
+   * To-do: Destruction and cleanup
+   */
   virtual ~GloveBase()
   {
   }
 
-  // getters
+  /**
+   * Get connected host
+   *
+   * @return connected host
+   */
   std::string get_host()
   {
     return connectionInfo.host;
   }
 
+  /**
+   * Get connected service
+   *
+   * @return connected service
+   */
   std::string get_service()
   {
     return connectionInfo.service;
   }
 
+  /**
+   * Get connected address
+   *
+   * @return connected address
+   */
   std::string get_address()
   {
     return connectionInfo.ip_address;
   }
 
+  /**
+   * Get sock descriptor for manual operations
+   *
+   * @return sockfd
+   */
   int get_sockfd()
   {
     return sockfd;
   }
 
-  // option getters/setters
+  /**
+   * Macro to auto-generate getters and setters for some settings
+   *
+   * @param container  Struct where all values are
+   * @param type       Data type (int, double, bool)
+   * @param option     Option to be set or got
+   *
+   * @return Current value
+   */
 #define option_conf(container, type, option) type option(type val)	\
   {									\
     return (container.option=val);					\
@@ -183,32 +360,154 @@ public:
     return container.option;						\
   }
 
+  /**
+   * Getter and setter for buffer_size
+   */
   option_conf(default_values, size_t, buffer_size);
+
+  /**
+   * Getter and setter for timeout
+   */
   option_conf(default_values, double, timeout);
+
+  /**
+   * Getter and setter for timeout_when_data
+   */
+  option_conf(default_values, bool, timeout_when_data);
+
+  /**
+   * Getter and setter for enable_input_filters
+   */
   option_conf(default_values, bool, enable_input_filters);
+
+  /**
+   * Getter and setter for enable_output_filters
+   */
   option_conf(default_values, bool, enable_output_filters);
 
+  /**
+   * Getter and setter for exceptions
+   */
+  option_conf(default_values, unsigned, exceptions);
+
+  /**
+   * Enables exceptions. 
+   *
+   * @param exceptions   Exception or exceptions to enable
+   */
+  void enable_exceptions(int exceptions)
+  {
+    default_values.exceptions |=exceptions;
+  }
+
+  /** 
+   * Disables exceptions
+   *
+   * @param exceptions   Exception or exceptions to disable
+   */
+  void remove_exceptions(int exceptions)
+  {
+    default_values.exceptions&=~exceptions;
+  }
+
   // socket handling
+  /**
+   * Performs a select() operation on the opened socket used
+   * as read o write descriptor (depending on test value)
+   *
+   * @param timeout Time as double variable (in seconds)
+   * @param test    SELECT_READ or SELECT_WRITE
+   *
+   * @see SELECT_READ @see SELECT_WRITE
+   *
+   * @return -1 on error, -2 on timeout, 0 if ok
+   */
   int select(const double timeout, int test=SELECT_READ);
+
+  /**
+   * Sends data (abstract) may differ for client and server
+   *
+   * @param data Data to be sent
+   */
   virtual void send(const std::string &data) = 0;
+
+  /**
+   * Receive data (abstract) differs for client and server
+   *
+   * @param timeout Timeout (-1 or nothing for default timeout)
+   * @param read_once Perform just one read operation. -1 for default behaviour
+   *
+   * @return Data received as C++ string
+   */
   virtual std::string receive(double timeout=-1, short read_once=-1) = 0;
 
+  /**
+   * Set socket options. See man setsockopt
+   *
+   * @param level  SOL_SOCKET and so
+   * @param optname SO_ERROR, SO_REUSEADDR, SO_KEEPALIVE... 
+   * @param optval Value
+   * @param optlen Value size
+   */
   void setsockopt(int level, int optname, void *optval, socklen_t optlen);
+
+  /**
+   * Get socket options. See man setsockopt
+   *
+   * @param level  SOL_SOCKET and so
+   * @param optname SO_ERROR, SO_REUSEADDR, SO_KEEPALIVE... 
+   * @param optval Variable to store value
+   * @param optlen Value's variable size
+   */
   void getsockopt(int level, int optname, void *optval, socklen_t *optlen);
 
   // When values are integers
+  /**
+   * Simple setsockopt for integer values
+   *
+   * @param optname (Currently supported: SO_KEEPALIVE, SO_REUSEADDR)
+   * @param val Integer Value
+   */
   void setsockopt(int optname, int val);
+
+  /**
+   * Simple getsockopt for integer values
+   *
+   * @param optname (Currently supported: SO_KEEPALIVE, SO_REUSEADDR)
+   * @param val Integer Value
+   */
   void getsockopt(int optname, int &val);
 
-  // getsockname interface
+  /**
+   * Get connected IP address and port
+   *
+   * @param ip     IP Address by reference
+   * @param port   Port by reference
+   * @param noexcp Don't throw exception on error
+   */
   void get_address(std::string &ip, int &port, bool noexcp=false);
 
+  /**
+   * Gets only ip address
+   *
+   * @param noexcp Don't throw exception on error
+   *
+   * @return Current IP Address
+   */
   std::string get_address(bool noexcp=false)
   {
     int port;
     return get_address(port, noexcp);
   }
 
+  /**
+   * Gets IP Address and port in a more comfortable way
+   *
+   * @param port    Port by ref
+   * @param noexcp  Don't throw exception on error
+   *
+   * @return Current IP address
+   */
   std::string get_address(int &port, bool noexcp=false)
   {
     std::string addr;
@@ -216,6 +515,14 @@ public:
     return addr;
   }
 
+  /**
+   * Gets connected port. It calls get_address() to get all the
+   * information. And throw away what's not needed
+   *
+   * @param noexcp Don't throw exception on error
+   *
+   * @return Port
+   */
   int get_connected_port(bool noexcp=false)
   {
     int port;
@@ -223,10 +530,13 @@ public:
 
     return port;
   }
-  // stream operations and manipulators
-  template <typename T>
 
-  // define operator<< for input strings, chars, integer and whatever stringstream accepts
+  // stream operations and manipulators
+  /**
+   * Defines the << operator for variable types compatible with streams.
+   * Used to send data through the socket.
+   */
+  template <typename T>
   GloveBase& operator<<(const T& x)
   {
     std::stringstream ss;
@@ -237,7 +547,10 @@ public:
     return *this;
   }
 
-  // define operator>> to receive info
+  /**
+   * Defines the >> operator to fill a std::string with the information
+   * received through the socket.
+   */
   GloveBase& operator>>(std::string &out)
   {
     out=this->receive(default_values.timeout, default_values.read_once);
@@ -245,25 +558,57 @@ public:
     return *this;
   }
 
-  // define reception manipulators
+  /**
+   * Reception manipulators interface. We can use a GloveManipulator to
+   * change the reception behaviour (increase timeout, enable read_once...)
+   *
+   * @param manipulator Manipulator to run
+   *
+   * @return current GloveBase instance
+   */
   GloveBase& operator>>(GloveBase& (*manipulator)(GloveBase&))
   {
     return manipulator(*this);
   }
 
+  /**
+   * Manipulators can have several input types, so let's have a general
+   * purpose manipulator. Later we will declare all available manipulators
+   * with a macro.
+   */
   template <typename T>
   class GloveManipulator
   {
   public:
+    /**
+     * Manipulator constructor. Let's copy the input value to a internal
+     * attribute of the same type.
+     *
+     * @param val Input value
+     */
     GloveManipulator(T val):val(val)
     {
     }
 
+    /**
+     * Modify settings of the GloveBase instance out
+     *
+     * @param out Where to define settings
+     *
+     * @return GloveBase instance
+     */
     virtual GloveBase& operator()(GloveBase& out) = 0;
   protected:
     T val;
   };
 
+  /**
+   * Macro to create manipulators. Create struct extending
+   * GloveManipulator with a specific value and the right ()
+   * operator to apply the operator.
+   * Also a friend operator>> that accepts the new born 
+   * operator class.
+   */
 #define newManipulator(_name, _type)				\
   struct set_##_name : public GloveManipulator<_type>		\
   {								\
@@ -283,6 +628,11 @@ public:
     return gm(out);						\
   }								\
 
+  /**
+   * Macro to create flag manipulators. Flag manipulators act within
+   * an integer variable modifying just one bit, setting or
+   * clearing it.
+   */
 #define newFlagManipulator(_name, _setting, _flag, _type)	\
   struct set_##_name : public GloveManipulator<_type>		\
   {								\
@@ -293,10 +643,9 @@ public:
     GloveBase& operator()(GloveBase &out)			\
     {								\
       if (val)							\
-	out.default_values._setting|=(1<<_flag);		\
+	out.default_values._setting|=_flag;			\
       else							\
-	out.default_values._setting&=~(1<<_flag);		\
-      out.default_values._setting=65534;			\
+	out.default_values._setting&=~_flag;			\
       return out;						\
     }								\
   };								\
@@ -306,12 +655,44 @@ public:
     return gm(out);						\
   }								\
 
+  /**
+   * Manipulator to set read_once value. Read operation MUST be done
+   * just once. If false, the read operation will be done until a
+   * timeout is received, the connection closed or the number of
+   * bytes we want to read reached.
+   */
   newManipulator(read_once,bool);
+
+  /**
+   * The timeout won't be returned if there is data in the buffer.
+   * Instead, the end of the read function will be.
+   */
   newManipulator(timeout_when_data, bool);
+
+  /**
+   * Enable input filters?
+   */
   newManipulator(enable_input_filters, bool);
+
+  /**
+   * Enable output filters?
+   */
   newManipulator(enable_output_filters, bool);
+
+  /**
+   * Sets timeout value in seconds
+   */
   newManipulator(timeout, double);
+
+  /**
+   * Will there be an exception on timeout ?
+   */
   newFlagManipulator(exception_on_timeout, exceptions, EXCEPTION_TIMEOUT, bool);
+
+  /**
+   * Will there be an exception on server disconnection ?
+   */
+  newFlagManipulator(exception_on_disconnection, exceptions, EXCEPTION_DISCONNECTED, bool);
 
 #undef newManipulator
 #undef newFlagManipulator
@@ -333,6 +714,13 @@ public:
   //   return gm(out);
   // }
 
+  /**
+   * operator<< for ostream manipulators, like endl
+   *
+   * @param manip Ostream manipulator
+   *
+   * @return A glove class reference will be returned
+   */
   // define an operator<< to allow ostream manipulators (e.g. std::endl)
   GloveBase& operator<<(ostream_manipulator manip)
   {
@@ -344,23 +732,85 @@ public:
     return *this;
   }
 
-  // GloveBase& operator<<(GloveBase& (*manipulator)(GloveBase&))
-  // {
-  //   return manipulator(*this);
-  // }
-
-
-  // filters
+  /**
+   * This is how a filter callback looks like. Just input a string and outputs a string
+   */
   using filter_callback = std::function<std::string (std::string &)>;
 
+  /**
+   * Adds a filter
+   *
+   * @param type   FILTER_INPUT or FILTER_OUTPUT. Input filters will be 
+   *               done before sending. Output filters will be done after
+   *               receiving.
+   * @param name   Filter's name. For our control.
+   * @param filter Filter function callback
+   * @param option Option for inserting filter: 
+   *                 "start" : to run this filter the first.
+   *                 "before": to run this filter before the filter called XXXX.
+   * @param value  If option == "before" this will be the name of the filter
+   *               we will postpone.
+   */
   void add_filter(filter_type type, std::string name, filter_callback filter, std::string option="", std::string value="");
+
+  /**
+   * Removes a filter
+   *
+   * @param type   Type of the filter (FILTER_INPUT, FILTER_OUTPUT)
+   * @param name   Name of the filter to delete
+   *
+   * @return true if ok, false if not
+   */
   bool remove_filter(filter_type type, std::string name);
+
+  /**
+   * Gets a list of filters (DEBUG)
+   *
+   * @param type   Type of filters I want to list
+   * 
+   * @return List of filters in a vector
+   */
   std::vector<std::string> get_filters(filter_type type);
+
+  /**
+   * Run filters on an input string. 
+   * This method will become protected !!!!
+   *
+   * @param type   Type of filters to run
+   * @param _input Input string to run filters on
+   *
+   * @return resulting string
+   */
   std::string run_filters(filter_type type, const std::string &_input);
 
+  /**
+   * Disconnect !!!
+   *
+   * @param how    Type of shutdown to perform. See SHUT_RD, SHUT_WR, 
+   *               SHUT_RDWD, SHUT_XX
+   */
   void disconnect(int how=SHUT_XX);
+
   // other utils
+  /**
+   * Create URI string
+   *
+   * @param service  Service to access (http, smtp, pop, ftp, etc). See /etc/services
+   * @param host     Host
+   * @param port     Port. If service is "", will be guessed
+   * @param username User name for access restricted URIs
+   * @param password Password
+   */
   static std::string build_uri (const std::string &service, const std::string &host, int port=0, const std::string &username="", const std::string &password="");
+
+  /**
+   * Create URI string, without service param
+   *
+   * @param host     Host
+   * @param port     Port. If service is "", will be guessed
+   * @param username User name for access restricted URIs
+   * @param password Password
+   */
   static std::string build_uri (const std::string &host, int port=0, const std::string &username="", const std::string &password="")
   {
     return build_uri("", host, port, username, password);
@@ -370,73 +820,185 @@ public:
   static uri get_from_uri (const std::string &uristring, bool resolve=true, std::string service_separator="");
 
   // some more tools
+  /**
+   * URL Encode string. To make it suitable for trasceiving with some protocols.
+   * borrowed from original knot https://github.com/r-lyeh/knot
+   * knot had adapted it from code by Fred Bulback
+   *
+   * @param str String to urlencode 
+   *
+   * @return urlencoded string
+   */
   static std::string urlencode( const std::string &str );
+
+  /**
+   * URL Decode string. To make it readable easily after transceiving by some protocols
+   * borrowed from original knot https://github.com/r-lyeh/knot
+   * knot had adapted it from code by Fred Bulback
+   *
+   * @param str String to urldecode
+   *
+   * @return urldecoded string
+   */
   static std::string urldecode( const std::string &str );
-  static std::string base64_encode(unsigned char const* , unsigned int len);
+
+  /**
+   * Base64 encode a string.
+   * Originally by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
+   * Left as char* because sometimes it's useful to encode a file when reading it.
+   *
+   * @param s     String to encode
+   * @param len   How many bytes to encode
+   *
+   * @return encoded string
+   */
+  static std::string base64_encode(unsigned char const* s, unsigned int len);
+
+  /**
+   * Base64 decode a string.
+   * Originally by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
+   *
+   * @param s    String to decode
+   *
+   * @return decoded string .
+   */
   static std::string base64_decode(std::string const& s);
 
 protected:
-  // socket
+  /** socket descriptor  */
   int sockfd;
+  /** connection start moment  */
   std::chrono::time_point<std::chrono::system_clock> start_dtm;
+  /** Current connection info  */
   hostinfo connectionInfo;
 
-  // configuration
+  /**
+   * Options for this instance
+   */
   struct local_options
   {
-    // timeout for read operations and connections
+    /** timeout for read operations and connections */
     double timeout;
-    // bool exception_on_timeout;     // receive
-    // optional exceptions. Sometimes we don't want it to throw some exceptions, e.g: when reading, sometimes
-    // on time out or peer disconnection, we may just want to return received data.
-    unsigned exceptions;	   // global
-    // We may want the exception timeout, but only when there's no data in the read buffer
-    bool timeout_when_data;	   // receive
-    // Perform just one read operation.
-    bool read_once;		   // receive
-    // By default, when using << , >> operators, perform a fixed read with this number of bytes
-    size_t fixed_read;		   // receive
-    // max. buffer size for read operations
-    size_t buffer_size;		   // send
-    // enable input filters (incoming data)
+    /**
+       Optional exceptions. Sometimes we don't want it to throw some exceptions, e.g: when reading, sometimes
+       on time out or peer disconnection, we may just want to return received data. 
+       Used *globally*.
+    */
+    unsigned exceptions;
+    /** We may want the exception timeout, but only when there's no data in the read buffer 
+       Used on *reception*
+    */
+    bool timeout_when_data; 
+    /** Perform just one read operation. 
+       Used on *reception*
+     */
+    bool read_once;
+    /** By default, when using >> operator, perform a fixed read with this number of bytes
+       Used on *reception*
+    */
+    size_t fixed_read;
+    /** max. buffer size for read operations
+       Used on *reception*
+     */
+    size_t buffer_size;	
+    /** enable input filters (incoming data) 
+       Used on *reception*
+     */
     bool enable_input_filters;
-    // enable output filters (outgoing data)
+    /** enable output filters (outgoing data) 
+       Used when *sending*
+     */
     bool enable_output_filters;
   };
-
+  /** Default options  */
   local_options  default_values;
-  // filters
+
+  /**
+   * Filter definition
+   */
   struct Filter
   {
+    /** Filter's name  */
     std::string name;
+    /** Filter's callback  */
     filter_callback filter;
   };
 
+  /** Input filters vector  */
   std::vector<Filter> input_filters;
+  /** Output filters vector  */
   std::vector<Filter> output_filters;
 
-  // constructor copying options
+  /* constructor copying options */
   GloveBase(local_options options):default_values(options)
   {
   }
 
-  // send and receive
+  /**
+   * Send data. You can find params help anywhere else on this page
+   * @param data
+   */
   void _send(const std::string &data);
+
+  /**
+   * Receiving data. You can find params help anywhere else on this page
+   * @param size
+   * @param timeout
+   * @param timeout_when data
+   * @param _buffer_size
+   * @param _read_once
+   * @param exception_on_timeout
+   */
   std::string _receive_fixed(const size_t size, double timeout, const bool timeout_when_data, size_t _buffer_size, short _read_once, bool exception_on_timeout);
-  // socket handling
+
+  /**
+   * Automatically gets level param for getsockopt()
+   *
+   * @param optname Option
+   */
   static int get_integer_sockopts_level(int optname);
 
+  /**
+   * Fills up start_dtm attribute with current time information
+   */
   void register_dtm();
+
+  /**
+   * Create a string with the user and password this way: "user:password@"
+   * with some little error checking
+   *
+   * @param user     User
+   * @param password Password
+   *
+   * @return Returned string
+   */
   static std::string user_and_pass(const std::string& user, const std::string &password);
+
+  /**
+   * Creates a string with the errno appended. Not thread safe! As errno isn't
+   */
   static std::string append_errno(std::string message);
 };
 
+/**
+ * Glove Main Class
+ */
 class Glove : public GloveBase
 {
 public:
+  /**
+   * Glove CONNECTED Client class
+   */
   class Client : public GloveBase
   {
   public:
+    /**
+     * Client constructor.
+     *
+     * @param sockfd    Socket to use
+     * @param ipaddress IP Address of this client
+     * @param host      Host
+     */
     Client(int sockfd, std::string ipaddress, std::string host)
     {
       this->sockfd = sockfd;
@@ -444,21 +1006,51 @@ public:
       this->connectionInfo.host = host;
     }
 
+    /**
+     * Client constructor
+     *
+     * @param sockfd    Socket to use
+     * @param ipaddress IP Address of this client
+     * @param host      Host
+     * @param options   Default options for this client
+     */
     Client(int sockfd, std::string ipaddress, std::string host, local_options options):Client(sockfd, ipaddress, host)
     {
       default_values = options;
     }
 
+    /**
+     * Send data !!
+     *
+     * @param data Data to send
+     */
     inline void send(const std::string &data)
     {
       this->_send(data);
     }
+
     // read once = read once then, returns
+    /**
+     * Receive data from this client
+     *
+     * @param timeout   Timeout in seconds
+     * @param read_once Just perform one read operation
+     *
+     * @return Received data
+     */
     std::string receive(double timeout=-1, short read_once=-1)
     {
       return _receive_fixed(0, timeout, default_values.timeout_when_data, default_values.buffer_size, read_once, default_values.exceptions & EXCEPTION_TIMEOUT);
     }
 
+    /**
+     * Receive a fixed amount of data from this client
+     *
+     * @param size    The size we want to read
+     * @param timeout Timeout in seconds
+     *
+     * @return Received data
+     */
     std::string receive_fixed(const size_t size, double timeout=-1)
     {
       return _receive_fixed(size, timeout, true, default_values.buffer_size, false, default_values.exceptions & EXCEPTION_TIMEOUT);
@@ -466,22 +1058,87 @@ public:
 
   };
 
+  /**
+   * That's a client callback (what we run when a client connects our server
+   * 
+   * int clientCallback(Client &c);
+   */
   using client_callback = std::function<int (Glove::Client &)>;
+
+  /**
+   * A server error callback. What we run when there is a problem with a client
+   *
+   * void problem (Client &c, int clientId, GloveException& e)
+   */
   using server_error_callback_t = std::function<void (Glove::Client &, int clientId, GloveException &e)>;
 
+  /**
+   * The simplest constructor. We may define some options after creating
+   */
   Glove();
 
   // create server
+  /**
+   * Creates directly a server to listen to connections
+   *
+   * @param port           Port
+   * @param cb             Client callback.
+   * @param bind_ip        The IP (or device) our server will listen to.
+   * @param buffer_size    Buffer size (defaults to GLOVE_DEFAULT_BUFFER_SIZE)
+   * @param error_callback Our error callback (won't do anything by default)
+   * @param backlog_queue  listen()'s backlog queue. The number of connections waiting
+   *                       to be accepted.
+   * @param domain         Defaults to GLOVE_DEFAULT_DOMAIN or AF_INET
+   */
   Glove(int port, client_callback cb, std::string bind_ip, const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, server_error_callback_t error_callback=nullptr, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN);
   // create client
+  /**
+   * Created directly a client and attempt to connect a server
+   *
+   * @param host    Host to connect to
+   * @param port    Port
+   * @param timeout Timeout in seconds (After this time, the connection will be disabled.
+   * @param domain  Defaults to GLOVE_DEFAULT_DOMAIN or AF_INET
+   */
   Glove( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN);
 
+  /**
+   * Destruction and cleanup
+   */
   virtual ~Glove();
 
+  /**
+   * Resolve a host, maybe in several addresses.
+   * Resolves IPv4 and IPv6 addresses
+   *
+   * @param host   Host
+   *
+   * @return List of hostinfo addresses. 
+   */
   static std::vector<hostinfo> resolveHost(const std::string& host);
 
+  /**
+   * Connect to a server (as a client)
+   *
+   * @param host    Host
+   * @param port    Port
+   * @param timeout Timeout in seconds
+   * @param domain  Domain
+   */
   void connect ( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN);
+
+  /**
+   * Disconnect
+   *
+   * @param how  How to disconnect.
+   */
   void disconnect (int how=SHUT_XX);
+
+  /**
+   * Sends data through socket
+   *
+   * @param data What to send
+   */
   inline void send ( const std::string& data)
   {
     if (!test_connected())
@@ -489,7 +1146,16 @@ public:
 
     _send(data);
   }
+
   // normal receive 
+  /**
+   * Receive data
+   *
+   * @param timeout   Timeout in seconds
+   * @param read_once Read just once (not as many times as needed)
+   *
+   * @return Received data
+   */
   std::string receive ( double timeout = -1, short read_once=-1)
   {
     if (!test_connected())
@@ -499,6 +1165,14 @@ public:
   }
 
   // receive size bytes no matter how many recv() you must call
+  /**
+   * Receive a fixed amount of data from the socket
+   *
+   * @param size     Size to receive
+   * @param timeout  Timeout in seconds
+   *
+   * @return Received data
+   */
   std::string receive_fixed ( const size_t size, double timeout = -1)
   {
     if (!test_connected())
@@ -507,34 +1181,80 @@ public:
     return _receive_fixed(size, timeout, true, default_values.buffer_size, false, default_values.exceptions & EXCEPTION_TIMEOUT);
   }
 
+  /**
+   * Listen for connections (as a server)
+   *
+   * @param port    Port
+   * @param cb      Callback to execute when a client comes
+   * @param bind_ip IP or device to bind to
+   * @param backlog Backlog queue. @see Glove()
+   * @param domain  Domain
+   */
   void listen(const int port, client_callback cb, std::string bind_ip, const unsigned backlog_queue, int domain = GLOVE_DEFAULT_DOMAIN);
 
+  /**
+   * Setter for server_error_callback option
+   *
+   * @param cb   Desired callback
+   */
   void server_error_callback(server_error_callback_t cb)
   {
     _server_error_callback = cb;
   }
 
   // some utils
+  /**
+   * Gets IP to bind listen() command when it's not specified. Trying to guess
+   * it with the domain parameter.
+   *
+   * @param domain   Domain
+   *
+   * @return String with the IP to bind to
+   */
   std::string getUnspecified(int domain);
 
   // get info...
+  /**
+   * Try to guess if the connection is open
+   *
+   * @return true if it is
+   */
   bool is_connected();
 
   // options getters/setters
+  /**
+   * Setter for shutdown_on_destroy_option
+   *
+   * @param val   New value
+   *
+   * @return new value
+   */
   bool shutdown_on_destroy(bool val)
   {
     return (_shutdown_on_destroy=val);
   }
 
+  /**
+   * Getter for shutdown_on_destroy_option
+   *
+   * @return Current value of this setting
+   */
   bool shutdown_on_destroy()
   {
     return _shutdown_on_destroy;
   }
 
+  /**
+   * Get a list of connected clients.
+   *
+   * @return Gets a map of connected clients with an 
+   * internal ID and a Client pointer (to interact with them)
+   */
   std::map <unsigned, Client*> get_connected_clients()
   {
     return clients_connected;
   }
+
   // server option configuration example
   // bool resolve_hostnames(bool val)
   // {
@@ -547,18 +1267,67 @@ public:
   // }
 
   // declares bool resolve_hostnames([bool])
+
+  /**
+   * Getter/Set resolve_hostnames server option
+   *
+   * bool resolve_hostnames(bool newVal);
+   * bool resolve_hostnames();
+   */
   option_conf(server_options, bool, resolve_hostnames);
+
   // declares bool thread_clients([bool])
+  /**
+   * Getter/Set thread_clients server option
+   *
+   * bool thread_clients(bool newVal);
+   * bool thread_clients();
+   */
   option_conf(server_options, bool, thread_clients);
+
   // declares bool thread_server([bool])
+  /**
+   * Getter/Set thread_server server option
+   *
+   * bool thread_server(bool newVal);
+   * bool thread_server();
+   */
   option_conf(server_options, bool, thread_server);
+
   // declares bool server_reuseaddr([bool])
+  /**
+   * Getter/Set server_reuseaddr server option
+   *
+   * bool server_reuseaddr(bool newVal);
+   * bool server_reuseaddr();
+   */
   option_conf(server_options, bool, server_reuseaddr);
+
   // declares unsigned max_accepted_clients([unsigned])
+  /**
+   * Getter/Set max_accepted_clients server option
+   *
+   * bool max_accepted_clients(bool newVal);
+   * bool max_accepted_clients();
+   */
   option_conf(server_options, unsigned, max_accepted_clients);
+
   // declares unsigned accept_wait([unsigned])
+  /**
+   * Getter/Set accept_wait server option
+   *
+   * bool accept_wait(bool newVal);
+   * bool accept_wait();
+   */
   option_conf(server_options, unsigned, accept_wait);
+
   // declares bool server_copy_options([bool])
+  /**
+   * Getter/Set copy_options server option
+   *
+   * bool copy_options(bool newVal);
+   * bool copy_options();
+   */
   option_conf(server_options, bool, copy_options);
 
 protected:
