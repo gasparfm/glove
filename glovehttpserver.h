@@ -9,48 +9,68 @@
 #include <vector>
 #include <sstream>
 
+/** Glove Http Server Version (numeric)  */
 #define GHS_VERSION 0001001
+/** Glove Http Server Version (string)  */
 #define GHS_VERSION_STR "0.1.1"
 
 class GloveHttpServer;
 
+/** Glove Http Errors  */
 class GloveHttpErrors
 {
  public:
+  /** No error  */
   static const short ALL_OK;
 
   /* Response errors GloveHttpResponse */
   /* action error codes */
+  /**
+     Cannot read file. Caused by GloveHttpResponse
+   */
   static const short FILE_CANNOT_READ;
 
   /* Vhost errors */
 
-  /* The specified host is not valid. Not for clients. */
+  /** The specified host is not valid. Not for clients. */
   static const short BAD_HOST_NAME;
-  /* When you try to create a new alias */
+  /** When you try to create a new alias */
   static const short BAD_ALIAS_NAME;
-  /* When you try to retrieve host information */
+  /** When you try to retrieve host information */
   static const short HOST_NOT_FOUND;
-  /* When you try to create an existing vhost */
+  /** When you try to create an existing vhost */
   static const short HOST_ALREADY_FOUND;
 
   /* Url retrieving errors GloveHttpServer */
-  /* Request line is too short to have needed information */
+  /** Request line is too short to have needed information */
   static const short ERROR_SHORT_REQUEST;
-  /* Request has not URI: There's no space after the METHOD */
+  /** Request has not URI: There's no space after the METHOD */
   static const short ERROR_NO_URI;
-  /* Malformed request string */
+  /** Malformed request string */
   static const short ERROR_MALFORMED_REQUEST;
-  /* Timeout when receiving data from client */
+  /** Timeout when receiving data from client */
   static const short ERROR_TIMED_OUT;
-  /* Server request is not a valid HTTP/1.1 request */
+  /** Server request is not a valid HTTP/1.1 request */
   static const short ERROR_BAD_PROTOCOL;
 
 };
 
+/** Glove Http Request  */
 class GloveHttpRequest
 {
  public:
+  /**
+   * A Http Request has been generated
+   *
+   * @param server       Server to connect to
+   * @param c            Client who requested
+   * @param error        Error
+   * @param method       Method
+   * @param raw_location Raw location string
+   * @param data         Input data
+   * @param httpheaders  HTTP headers
+   * @param serverPort   Port where the server is.
+   */
   GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort);
   GloveHttpRequest(bool r) {}
   ~GloveHttpRequest();
@@ -97,6 +117,7 @@ namespace
   typedef ostream_type& (*ostream_manipulator)(ostream_type&);
 };
 
+/** Glove Http Response  */
 class GloveHttpResponse
 {
  public:
@@ -275,6 +296,7 @@ class GloveHttpResponse
 
 using _url_callback = std::function<void(GloveHttpRequest&, GloveHttpResponse&)>;
 
+/** Glove HTTP Uri: Uri control, verify if a request matches a given URL format  */
 class GloveHttpUri
 {
  public:
@@ -293,6 +315,7 @@ class GloveHttpUri
   _url_callback callback;
 };
 
+/** Glove HTTP Server  */
 class GloveHttpServer
 {
  public:

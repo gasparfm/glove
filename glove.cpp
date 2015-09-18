@@ -12,11 +12,20 @@
 *  - Some code borrowed from r-lyeh's knot ( https://github.com/r-lyeh/knot )
 *  - urlencode/urldecode borrowed from knot base on code by Fred Bulback
 *  - base64 encode/decode functions by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
-*  - send() and recv() are called just once, so we can replace these functions
+*  - send() and recv() are called just once (well recv() twice), so we can replace these functions
+*  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog:
-*  20150501 : Fixed resolveHost() to resolve IPv6 and IPv4, whatever it comes to it.
-*  20150501 : Bug fixing on flag manipulations. Added functions and manipulators for exceptions
+*  20150503 : - Bug fixing in non-ssl connections trying to call ssl functions
+*  20150502 : - Error documentation.
+*             - Changed error 100 "Peer shutdown" to error 21
+*             - First steps with openSSL connections
+*  20150501 : - Connection Info is filled in a separate function, allowing us to get the service name
+*              even when resolve_hostnames is false. That's because we may want to guess
+*              if the service is secure (by service name)
+*             - (this->connected == false) condition when connecting to a server
+*             - Fixed resolveHost() to resolve IPv6 and IPv4, whatever it comes to it.
+*             - Bug fixing on flag manipulations. Added functions and manipulators for exceptions
 *  20150430 : some more more doc for Doxygen (in glove.hpp) (I'd like to comment everything)
 *  20150425 : some more doc for Doxygen (in glove.hpp)
 *  20150418 : some doc for Doxygen (in glove.hpp)
@@ -29,6 +38,7 @@
 *  20140807 : Begin this project
 *
 * To-do:
+*  1 - SSL shutdown. Context and handler cleanup
 *  2 - epoll support
 *  6 - be able to connect with protocol/service names
 *  7 - set_option(...) allowing a variadic template to set every client or server option
@@ -60,8 +70,93 @@
 * 
 *************************************************************/
 
+/*
+ * Some more doc, error! GloveException codes:
+ *
+ *   1: "Failed to resolve": Can't resolve host
+ *       Found on Glove::connect() 
+ *                Glove::resolveHost()
+ *   2: "Failed to resolve": Can't get IP address, host
+ *       Found on Glove::resolveHost()
+ *                Glove::fill_connection_info() (only if server_options.resolve_hostnames is true)
+ *   3: "Cannot get IP address": Current address structure don't have valid information for current domain
+ *      Maybe we have a IPv6 address and try to get as IPv4
+ *      Found on Glove::fill_connection_info()
+ *               Glove::resolveHost()
+ *   4: "Cannot connect to the server" : We've tried but cannot connect
+ *      Found on Glove::connect()
+ *   5: "Not connected" : We're not connected!!
+ *      Found on Glove::test_connected() if we're not connected and EXCEPTION_DISCONNECTED is enabled
+ *   6: "Socket error when sending" : send() returns -1 (if secure connection SSL_write() returns -1
+ *      Found on GloveBase::_send()
+ *   7: "Timed out while receiving data" : We were waiting for data which didn't come after
+ *      waiting for [timeout] seconds. 
+ *      Found on GloveBase::_receive_fixed() when timeout, exception_on_timeout=true 
+ *                                           BUT if we've already received data, timeout_when_data must be true too.
+ *   8: "Error while waiting for data" : We were waiting for data, but received an unexpected error.
+ *      Found on GloveBase::_receive_fixed()
+ *   9: "Error receiving data" : recv() returns -1 (if secure connection SSL_read() returns -1)
+ *      Found on GloveBase::_receive_fixed()
+ *  10: "Socket was not closed" : Problem closing socket (bad socket? IO Error?)
+ *      Found on GloveBase::disconnect()
+ *  11: "Cannot create socket"
+ *      Found on Glove::listen()
+ *               Glove::connect()
+ *  12: "Cannot bind to port"
+ *      Found on Glove::listen()
+ *  13: "Cannot perform listen"
+ *      Found on Glove::listen()
+ *  14: "Failed to set option on socket" : setsockopt() returns -1
+ *      Found on GloveBase::setsockopt()
+ *  15: "Failed to get option on socket" : getsockopt() returns -1
+ *      Found on GloveBase::getsockopt()
+ *  16: "Unrecognised socket option, or it does not accept ints" : socket option not recognised 
+ *      (maybe my fault, because not implemented)
+ *      Found on GloveBase::get_integer_sockopts_level() used by GloveBase::setsockopt() and GloveBase::getsockopt()
+ *  17: "TCP Error" : TCP Error on connection
+ *      Found on GloveBase::connect_nonblocking()
+ *  18: "Socket error" : error receiving when checking connection
+ *      Found on Glove::is_connected()
+ *  19: "Error calling getsockname()"
+ *      Found on GloveBase::get_address()
+ *  20: "Socket was not shutted down" : Error on shutdown()
+ *      Found on GloveBase::disconnect()
+ *  21: "Peer shutdown" : Peer shutdown when receiving
+ *      Found on GloveBase::_receive_fixed()
+ *  22: "Couldn't create SSL context" :
+ *      Found on Glove::SSLClientHandshake() when connecting TO a server
+ *               Glove::SSLServerInitialize() when creating server context
+ *  23: "Couldn't create SSL handler
+ *      Found on Glove::SSLClientHandshake()
+ *  24: "Couldn't assign socket to SSL session"
+ *      Found on Glove::SSLClientHandshake()
+ *  25: "SSL handshake failure"
+ *      Found on Glove::SSLClientHandshake()
+ *  26: "Couldn't load CA path" : Can't load certificate authorities!
+ *      Found on Glove::SSLClientHandshake() ssl_options.flags must have SSL_FLAG_VERIFY_CA enabled
+ *  27: "Couldn't get certificate chain" : Tried to get certificate chain, but couldn't
+ *      Found on Glove::SSLGetCertificatesInfo()
+ *  28: "Bad 'Not Before' time in certificate"
+ *      Found on Glove::SSLGetCertificatesInfo();
+ *  29: "Bad 'Not After' time in certificate"
+ *      Found on Glove::SSLGetCertificatesInfo();
+ *  30: "Certificate chain file XXXX does not exist"
+ *      Found on Glove::SSLServerInitialize() when trying to load the certificate chain file
+ *  31: "There was a problem reading certificate chain file XXXX."
+ *      Found on Glove::SSLServerInitialize() when trying to load the certificate chain file
+ *  32: "Certificate key file XXXX does not exist"
+ *      Found on Glove::SSLServerInitialize() when trying to load the certificate key file
+ *  33: "There was a problem reading certificate key file XXXX."
+ *      Found on Glove::SSLServerInitialize() when trying to load the certificate key file
+ *  34: "Can't load certificate chain file XXXXX"
+ *      Found on Glove::SSLServerInitialize() when trying to load the certificate chain file
+ *  35: "Can't load certificate key file XXXXXX"
+ *      Found on Glove::SSLServerInitialize() when trying to load the certificate key file
+ *  36: "Private key doesn't match the certificate"
+ *      Found on Glove::SSLServerInitialize() when certificate and key are loaded
+ */
+
 #include "glove.hpp"
-#include <cstdlib>
 #include <cstring> // memset(), strerror()
 #include <iostream> // debug only
 #include <arpa/inet.h>
@@ -70,7 +165,6 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netdb.h>
 #include <unistd.h>
 
 /** Initialization (if any), it was intended to be cross-platform, but time
@@ -109,8 +203,11 @@
 /** Calls shutdown()  */
 #define SHUTDOWN(A,B)             ::shutdown((A),(B))
 
-
 const char* GloveBase::CRLF = "\r\n";
+
+#if ENABLE_OPENSSL
+bool Glove::openSSLInitialized = false;
+#endif
 
 namespace
 {
@@ -139,18 +236,117 @@ enum
 
     return &buf[i+1];
   }
+#if ENABLE_OPENSSL
+  /**
+   * Extract a substring from origin into buffer, updating starting
+   * value to call in chain. Used by ASN1_TIME_to_time_t to extract
+   * substrings easyly
+   *
+   * @param buffer  Where to write to
+   * @param origin  Original string
+   * @param from    Where to start from. 
+   *                           Updated to the last position after end.
+   * @param size    Characters to extract.
+   *
+   * @return char* reference to buffer
+   */
+  char* join(char* buffer, const char* origin, size_t *from, size_t size)
+  {
+    size_t i=0;
+    while (i<size)
+      {
+	buffer[i++] = origin[(*from)++];
+      }
+    buffer[i] = '\0';
+    return buffer;
+  }
 
+  /**
+   * Transforms ASN1 time sring to time_t (except milliseconds and time zone)
+   * Ideas from: http://stackoverflow.com/questions/10975542/asn1-time-conversion
+   *
+   * @param time    SSL ASN1_TIME pointer
+   * @param tmt     time_t pointer to write to
+   *
+   * @return int 0 if OK, <0 if anything goes wrong
+   */
+  int ASN1_TIME_to_time_t(ASN1_TIME* time, time_t *tmt)
+  {
+    const char* data = (char*)time->data;
+    size_t p = 0;
+    char buf[5];
+    struct tm t;
+    memset(&t, 0, sizeof(t));
+    size_t datalen = strlen(data);
+
+    if (time->type == V_ASN1_UTCTIME) {/* two digit year */
+      /* error checking YYMMDDHH at least */
+      if (datalen<8)
+	return -1;
+      t.tm_year = atoi (join(buf, data, &p, 2));
+      if (t.tm_year<70)
+	t.tm_year += 100;
+      datalen = strlen(data+2);
+    } else if (time->type == V_ASN1_GENERALIZEDTIME) {/* four digit year */
+      /* error checking YYYYMMDDHH at least*/
+      if (datalen<10)
+	return -1;
+
+      t.tm_year = atoi (join(buf, data, &p, 4));
+      t.tm_year -= 1900;
+      datalen = strlen(data+4);
+    }
+
+    /* the year is out of datalen. Now datalen is fixed */
+
+    t.tm_mon = atoi (join(buf, data, &p, 2))-1; /* January is 0 for time_t */
+    t.tm_mday= atoi (join(buf, data, &p, 2));
+    t.tm_hour= atoi (join(buf, data, &p, 2));
+
+    if (datalen<8)
+      return !(*tmt = mktime(&t));
+    t.tm_min = atoi (join(buf, data, &p, 2));
+
+    if (datalen<10)
+      return !(*tmt = mktime(&t));
+    t.tm_sec = atoi (join(buf, data, &p, 2));
+    /* Ignore millisecnds and time zone */
+    return !(*tmt = mktime(&t));
+  }
+
+  /**
+   * Test if file exists
+   *
+   * @param filename File Name in char*
+   *
+   * @return 1 if file exists, 0 if not, -1 if errors
+   */
+  short fileExists(const char *filename)
+  {
+    int fd=open(filename, O_RDONLY);
+    if (fd==-1)
+      {
+	if (errno==2)		/* If errno==2 it means file not found */
+	  return 0;		/* otherwise there is another error at */
+	else 			/* reading file, for example path not  */
+	  return -1;		/* found, no memory, etc */
+      }
+    close(fd);			/* If we close the file, it exists */
+    return 1;
+  }
+
+#endif
 };
 
 void GloveBase::setsockopt(int level, int optname, void *optval, socklen_t optlen)
 {
-  if (SETSOCKOPT(sockfd, level, optname, optval, optlen) < 0)
+  if (SETSOCKOPT(conn.sockfd, level, optname, optval, optlen) < 0)
     throw GloveException(14, append_errno("Failed to set option on socket: "));
 }
 
 void GloveBase::getsockopt(int level, int optname, void *optval, socklen_t *optlen)
 {
-  if (GETSOCKOPT(sockfd, level, optname, optval, optlen) < 0)
+  if (GETSOCKOPT(conn.sockfd, level, optname, optval, optlen) < 0)
     throw GloveException(15, append_errno("Failed to get option on socket: "));
 }
 
@@ -196,7 +392,7 @@ int GloveBase::select(const double timeout, int test)
     // set up the file descriptor set
     fd_set fds;
     FD_ZERO(&fds);
-    FD_SET(sockfd, &fds);
+    FD_SET(conn.sockfd, &fds);
     fd_set *rset=NULL, *wset=NULL;
 
     // set up the struct timeval for the timeout
@@ -212,9 +408,9 @@ int GloveBase::select(const double timeout, int test)
     // if  tv = {n,m}, then select() waits up to n.m seconds
     // if  tv = {0,0}, then select() does polling
     // if &tv =  NULL, then select() waits forever
-    int ret = SELECT(sockfd+1, rset, wset, NULL, &tv);
+    int ret = SELECT(conn.sockfd+1, rset, wset, NULL, &tv);
 
-    return ( ret == -1 ? sockfd = -1, TCP_ERROR : ret == 0 ? TCP_TIMEOUT : TCP_OK );
+    return ( ret == -1 ? conn.sockfd = -1, TCP_ERROR : ret == 0 ? TCP_TIMEOUT : TCP_OK );
 }
 
 void GloveBase::_send(const std::string &data)
@@ -224,8 +420,15 @@ void GloveBase::_send(const std::string &data)
   int bytes_sent;
   do
     {
-      // msg_nosignal avoid systems signals
-      bytes_sent = SEND( sockfd, out.c_str(), out.size(), MSG_NOSIGNAL);
+#if ENABLE_OPENSSL
+      /* Sent with SSL or not */
+      if (conn.secureConnection == ENABLE_SSL)
+	bytes_sent = SSL_write(conn.ssl, out.c_str(), out.size());
+      else
+#endif
+	// msg_nosignal avoid systems signals
+	bytes_sent = SEND( conn.sockfd, out.c_str(), out.size(), MSG_NOSIGNAL);
+
       if (bytes_sent == -1)
 	{
 	  throw GloveException(6, append_errno("Socket error when sending: "));
@@ -241,6 +444,10 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
   std::string in;
   int bytes_received;
   size_t requested_size=size;
+#if ENABLE_OPENSSL
+  /* openssl has not downloaded all bytes from the buffer */
+  size_t pending_bytes=0;
+#endif
   if (timeout==-1)
     timeout = default_values.timeout;
 
@@ -249,6 +456,9 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
   do
     {
       int error;
+#if ENABLE_OPENSSL
+      if (!pending_bytes)
+#endif
       if ( (timeout > 0.0) && ( ( ( error= select(timeout) ) != TCP_OK) ) ) 
 	{
 	  if (error == TCP_TIMEOUT)
@@ -263,19 +473,23 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 	  else
 	    throw GloveException(8, append_errno("Error while waiting for data: "));
 	}
-
+      /* Can put this before de do {} */
       int __buffer_size = (size>0)?((requested_size>_buffer_size)?_buffer_size:requested_size):_buffer_size;
-
       std::string buffer(__buffer_size, '\0');
+#if ENABLE_OPENSSL
+      if (conn.secureConnection == ENABLE_SSL)
+	bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1);
+      else
+#endif
+	bytes_received = RECV (conn.sockfd, &buffer[0], buffer.size(), 0);
 
-      bytes_received = RECV (sockfd, &buffer[0], buffer.size(), 0);
       if (bytes_received < 0)
 	throw GloveException(9, append_errno("Error receiving data: "));
 
       if (bytes_received == 0)
 	{
 	  if (default_values.exceptions & EXCEPTION_DISCONNECTED)
-	    throw GloveException(100, "Peer shutdown");
+	    throw GloveException(21, "Peer shutdown");
 	  else
 	    break;
 	}
@@ -291,8 +505,15 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 	  if (requested_size<=0)
 	    break;
 	}
+#if ENABLE_OPENSSL
+      //      pending_bytes = SSL_pending(conn.ssl);
+      if ( (conn.secureConnection) && (pending_bytes = SSL_pending(conn.ssl)) )
+	{
+	  continue;
+	}
+#endif
     }
-  while ( (requested_size > 0) && (!read_once) );
+    while ( (requested_size > 0) && (!read_once) );
 
   return run_filters(FILTER_INPUT, in);
 }
@@ -364,10 +585,10 @@ void GloveBase::disconnect(int how)
 {
   if (how == SHUT_XX)
     {
-      if (CLOSE(sockfd) < 0)
+      if (CLOSE(conn.sockfd) < 0)
 	throw GloveException(10, append_errno("Socket was not closed successfully: "));
     }
-  else if (SHUTDOWN(sockfd, how) < 0)
+  else if (SHUTDOWN(conn.sockfd, how) < 0)
     throw GloveException(20, append_errno("Socket was not shutted down successfully"));
 }
 
@@ -410,11 +631,11 @@ std::string GloveBase::build_uri (const std::string &service, const std::string 
       else if ( port > 65535 )
 	throw GloveUriException(1002, "Port must be lower than 65536");
 
-      servent *srv = getservbyport(ntohs(port), "tcp");
-      if (srv == NULL)
+      std::string servName = getServByPort(port);
+      if (servName.empty())
 	throw GloveUriException(1004, "Could'nt find service port");
 
-      res=srv->s_name + std::string("://")+user_and_pass(username, password)+host;
+      res=servName + std::string("://")+user_and_pass(username, password)+host;
     }
 
   return res;
@@ -529,6 +750,17 @@ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resol
 }
 
 // ------------- tools ---------------
+std::string GloveBase::getServByPort(int port)
+{
+  servent *srv = getservbyport(ntohs(port), "tcp");
+  if (srv != NULL)
+    {
+      return srv->s_name;
+    }
+
+  return "";
+}
+
 // borrowed from original knot https://github.com/r-lyeh/knot
 // knot had adapted it from code by Fred Bulback
 std::string GloveBase::urlencode( const std::string &str ) 
@@ -698,6 +930,9 @@ std::string GloveBase::base64_decode(std::string const& encoded_string)
 Glove::Glove(): connected(false), _shutdown_on_destroy(false), server_options({false, true, true, true, GLOVE_DEFAULT_MAX_CLIENTS, GLOVE_DEFAULT_ACCEPT_WAIT, true}), _server_error_callback(NULL), accept_clients(false), clientId(0)
 {
   default_values.buffer_size=GLOVE_DEFAULT_BUFFER_SIZE;
+#if ENABLE_OPENSSL
+  setSSLDefaultValues();
+#endif
 }
 
 // Direct server creation
@@ -709,9 +944,9 @@ Glove::Glove(int port, client_callback cb, std::string bind_ip, const size_t buf
 }
 
 // Direct client creation
-Glove::Glove( const std::string& host, const int port, double timeout, int domain): Glove()
+Glove::Glove( const std::string& host, const int port, double timeout, int domain, int secure): Glove()
 {
-  connect(host, port, timeout, domain);
+  connect(host, port, timeout, domain, secure);
 }
 
 Glove::~Glove()
@@ -732,7 +967,33 @@ bool Glove::test_connected()
   return true;
 }
 
-void Glove::connect(const std :: string & host, const int port, double timeout, int domain)
+void Glove::fill_connection_info(addrinfo *rp, int port)
+{
+  if (server_options.resolve_hostnames)
+    {
+      char hostname[NI_MAXHOST];
+      char service[NI_MAXSERV];
+
+      int error = getnameinfo(rp->ai_addr, rp->ai_addrlen, hostname, NI_MAXHOST, service, NI_MAXSERV, 0); 
+      if (error != 0)
+	throw GloveException(2, append_errno("Failed to resolve: "));
+      connectionInfo.host = hostname;
+      connectionInfo.service = service;
+    }
+  else
+    {
+      /* We won't get the host, but may guess the service name */
+      connectionInfo.service = getServByPort(port);
+    }
+  char ipaddress[INET_ADDRSTRLEN];
+
+  if ( inet_ntop(AF_INET,  &((sockaddr_in *)rp->ai_addr)->sin_addr, ipaddress, INET_ADDRSTRLEN) == NULL)
+    throw GloveException(3, "Cannot get IP address");
+
+  connectionInfo.ip_address = ipaddress;
+}
+
+void Glove::connect(const std :: string & host, const int port, double timeout, int domain, int secure)
 {
   addrinfo address;
   int error;
@@ -752,53 +1013,350 @@ void Glove::connect(const std :: string & host, const int port, double timeout, 
   if ( error != 0)
     throw GloveException(1, append_errno("Failed to resolve: "));
 
+  this->connected = false;
   // try to connect the server 
-  for (rp = servinfo; rp != NULL; rp = rp->ai_next) {
-    sockfd = SOCKET (rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+  for (rp = servinfo; rp != NULL, this->connected==false; rp = rp->ai_next) 
+    {
+      conn.sockfd = SOCKET (rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 
-    if (sockfd == -1 )
-      continue;
+      if (conn.sockfd == -1 )
+	continue;
 
-    if (timeout==0)
-      {
-	if (CONNECT(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) 
-	  this->connected = true;
-      }
-    else
-      {
-	if ( connect_nonblocking ( rp->ai_addr, rp->ai_addrlen, timeout) ) 
-	  this->connected = true;
-      }
+      if (timeout==0)
+	{
+	  if (CONNECT(conn.sockfd, rp->ai_addr, rp->ai_addrlen) == 0) 
+	    this->connected = true;
+	}
+      else
+	{
+	  if ( connect_nonblocking ( rp->ai_addr, rp->ai_addrlen, timeout) ) 
+	    this->connected = true;
+	}
 
-    if (this->connected)
-      {
-	if (server_options.resolve_hostnames)
-	  {
-	    char hostname[NI_MAXHOST];
-	    char service[NI_MAXSERV];
+      if (this->connected)
+	fill_connection_info(rp, port);
+      else 
+	CLOSE(conn.sockfd);
+    }
 
-	    error = getnameinfo(rp->ai_addr, rp->ai_addrlen, hostname, NI_MAXHOST, service, NI_MAXSERV, 0); 
-	    if (error != 0)
-	      throw GloveException(2, append_errno("Failed to resolve: "));
-	    connectionInfo.host = hostname;
-	    connectionInfo.service = service;
-	  }
-
-	char ipaddress[INET_ADDRSTRLEN];
-
-	if ( inet_ntop(AF_INET,  &((sockaddr_in *)rp->ai_addr)->sin_addr, ipaddress, INET_ADDRSTRLEN) == NULL)
-	  throw GloveException(3, "Cannot get IP address");
-	connectionInfo.ip_address = ipaddress;
-      }
-    else 
-      CLOSE(sockfd);
-  }
+  if (conn.sockfd == -1)
+    throw GloveException(11, append_errno("Cannot create socket: "));
 
   if (!this->connected)
     throw GloveException(4, append_errno("Cannot connect to the server: "));
 
   freeaddrinfo ( servinfo );
+
+  /* Give an initial value for this */
+  conn.secureConnection = DISABLE_SSL;
+  /* SSL connection */
+# if ENABLE_OPENSSL
+  if (secure == AUTODETECT_SSL)
+    secure = detectSecureService(connectionInfo.service);
+
+  if (secure)
+    {
+      bool hndshk = SSLClientHandshake();
+      if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CIPHER_INFO) )
+	SSLGetCipherInfo();
+
+      if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CERT_INFO) )
+	SSLGetCertificatesInfo();
+    }
+# endif
   errno = 0;			// clear remaining connect_nonblocking error
+}
+
+#if ENABLE_OPENSSL
+/* All these things will be only in compilations with SSL enabled */
+
+void Glove::setSSLDefaultValues()
+{
+  ssl_options.ssl_method = SSLv23;
+  ssl_options.flags = SSL_FLAG_VERIFY_CA;
+  ssl_options.CApath = GLOVE_DEFAULT_SSL_CAPATH;
+}
+
+void Glove::initializeOpenSSL()
+{
+  if (!openSSLInitialized)
+    {
+      SSL_library_init();
+#if GLOVEDEBUG > 0
+      SSL_load_error_strings();
+#endif
+    }
+}
+
+void Glove::SSLServerInitialize()
+{
+  conn.ssl = NULL;
+
+  initializeOpenSSL();
+
+  OpenSSL_add_all_algorithms();		/* load & register all cryptos, etc. */
+
+  /* We can try SSLv23_server_method() to try several 
+   methods, starting from the more secure*/
+  conn.ctx = SSL_CTX_new(getSSLClientMethod());
+  if (conn.ctx == NULL)
+    throw GloveException(22, "Couldn't create SSL context");
+
+  /* This tests can be done by openSSL but won't be separated erros */
+  short ex = fileExists(ssl_options.certChain.c_str());
+  if (ex == 0)
+    throw GloveException(30, "Certificate chain file \""+ssl_options.certChain+"\" does not exist");
+  else if (ex == -1)
+    throw GloveException(31, "There was a problem reading certificate chain file \""+ssl_options.certChain+"\".");
+
+  ex = fileExists(ssl_options.certKey.c_str());
+  if (ex == 0)
+    throw GloveException(32, "Certificate key file \""+ssl_options.certKey+"\" does not exist");
+  else if (ex == -1)
+    throw GloveException(33, "There was a problem reading certificate key file \""+ssl_options.certKey+"\".");
+
+  if (SSL_CTX_use_certificate_chain_file(conn.ctx, ssl_options.certChain.c_str()) < 1)
+    throw GloveException(34, "Can't load certificate chain file \""+ssl_options.certChain+"\"");
+
+  if (SSL_CTX_use_PrivateKey_file(conn.ctx, ssl_options.certKey.c_str(), SSL_FILETYPE_PEM) < 1)
+    throw GloveException(35, "Can't load certificate key file \""+ssl_options.certKey+"\"");
+
+  if (!SSL_CTX_check_private_key(conn.ctx))
+    throw GloveException(36, "Private key doesn't match the certificate");
+}
+
+bool Glove::SSLClientHandshake(bool exception_on_handshake_failure)
+{
+  initializeOpenSSL();
+  conn.ctx = SSL_CTX_new(getSSLClientMethod());
+  if (conn.ctx == NULL)
+    throw GloveException(22, "Couldn't create SSL context");
+
+  if (ssl_options.flags & SSL_FLAG_FAIL_INVALID_CA)
+    conn.ctx->verify_mode = 1;
+
+  conn.ssl = SSL_new (conn.ctx);
+  if (conn.ssl == NULL)
+    throw GloveException(23, "Couldn't create SSL handler");
+
+  if (SSL_set_fd(conn.ssl, conn.sockfd) == 0)
+    throw GloveException(24, "Couldn't assign socket to SSL session");
+
+  if (ssl_options.flags & SSL_FLAG_VERIFY_CA)
+    {
+      if (SSL_CTX_load_verify_locations(conn.ctx, NULL, ssl_options.CApath.c_str()) == 0)
+	throw GloveException(26, "Couldn't load CApath");
+    }
+
+  if (SSL_connect(conn.ssl) < 1)
+    {
+      if (exception_on_handshake_failure)
+	throw GloveException(25, "SSL handshake failure");
+
+      return false;
+    }
+
+  /* Fill verify result */
+  conn.cert_verify_result = SSL_get_verify_result (conn.ssl);
+  conn.cert_error_string = X509_verify_cert_error_string(conn.cert_verify_result);
+  conn.cipher_info_present = false;
+  conn.certificates_info_present = false;
+  conn.secureConnection = ENABLE_SSL;
+
+  return true;
+}
+
+const SSL_METHOD* Glove::getSSLClientMethod()
+{
+  switch (ssl_options.ssl_method)
+    {
+    case SSLv23 : return SSLv23_client_method();
+    case SSLv3  : return SSLv3_client_method();
+    case TLSv1  : return TLSv1_client_method();
+    case TLSv1_1: return TLSv1_1_client_method();
+    case TLSv1_2: return TLSv1_2_client_method();
+    case DTLSv1 : return DTLSv1_client_method();
+    }
+}
+
+long Glove::getSSLVerifyState()
+{
+  if (!conn.secureConnection)
+    return -1;
+
+  return conn.cert_verify_result;
+}
+
+std::string Glove::getSSLVerifyString()
+{
+  if (!conn.secureConnection)
+    return "Not a secure connection";
+
+  return conn.cert_error_string;
+}
+
+void Glove::SSLGetCipherInfo()
+{
+  if (conn.cipher_info_present)
+    return;
+
+  if (!conn.secureConnection)
+    return;
+  /* Verificar que conn.ssl SEA != NULL */
+  conn.ssl_version = SSL_get_version(conn.ssl);
+  conn.cipher_name = SSL_get_cipher_name(conn.ssl);
+  conn.cipher_version = SSL_get_cipher_version(conn.ssl);
+  conn.cipher_description.resize(128, '\0');
+  SSL_CIPHER_description((SSL_CIPHER*)SSL_get_current_cipher(conn.ssl), &conn.cipher_description[0], 128);
+}
+
+void Glove::SSLGetCertificatesInfo()
+{
+  STACK_OF(X509) *chain = SSL_get_peer_cert_chain(conn.ssl);
+  if (!chain)
+    throw GloveException(27, "Couldn't get certificate chain");
+
+  for (unsigned i=0; i<sk_X509_num(chain); i++)
+    {
+      SSL_certificate current;
+      current.cert = sk_X509_value(chain, i);
+      if (!current.cert)
+	continue;
+
+      X509_NAME* certname = X509_get_subject_name(current.cert);
+      for (unsigned j=0; j<X509_NAME_entry_count(certname); ++j)
+	{
+	  X509_NAME_ENTRY* entry = X509_NAME_get_entry(certname, j);
+	  if (entry == NULL)
+	    continue;
+
+	  int n = OBJ_obj2nid(entry->object);
+	  char *s;
+	  char buffer[1024];
+	  if ((n == NID_undef) || ((s = (char*)OBJ_nid2sn(n)) == NULL)) 
+	    {
+	      i2t_ASN1_OBJECT(buffer, sizeof(buffer), entry->object);
+	      s = buffer;
+	    }
+	  //	  current.entries[s] = entry->value->data;
+	  //	  std::string tmpval = entry->value->data;
+	  current.entries.insert({s, (char*)entry->value->data});
+	}
+
+      if (ASN1_TIME_to_time_t(X509_get_notBefore(current.cert), &current.notBefore)!=0)
+	throw GloveException(28, "Bad 'Not Before' time in certificate");
+      if (ASN1_TIME_to_time_t(X509_get_notAfter(current.cert), &current.notAfter)!=0)
+	throw GloveException(29, "Bad 'Not After' time in certificate");
+
+      conn.certificates.push_back(current);
+    }
+  conn.certificates_info_present = true;
+}
+
+std::string Glove::getSSLVersion()
+{
+  if (!conn.secureConnection)
+    return "";
+  if (!conn.cipher_info_present)
+    SSLGetCipherInfo();
+
+  return conn.ssl_version;
+}
+
+std::string Glove::getSSLCipherName()
+{
+  if (!conn.secureConnection)
+    return "";
+  if (!conn.cipher_info_present)
+    SSLGetCipherInfo();
+
+  return conn.cipher_name;
+}
+
+std::string Glove::getSSLCipherVersion()
+{
+  if (!conn.secureConnection)
+    return "";
+  if (!conn.cipher_info_present)
+    SSLGetCipherInfo();
+
+  return conn.cipher_version;
+}
+
+std::string Glove::getSSLCipherDescription()
+{
+  if (!conn.secureConnection)
+    return "";
+  if (!conn.cipher_info_present)
+    SSLGetCipherInfo();
+
+  return conn.cipher_description;
+}
+
+std::string Glove::debugCipherInfo()
+{
+  return "SSL Version: "+getSSLVersion()+"\n" +
+    "Cipher name: "+getSSLCipherName()+"\n" +
+    "Cipher version: "+getSSLCipherVersion()+"\n" +
+    "Cipher description: "+getSSLCipherDescription()+"\n";
+}
+
+std::string Glove::debugCertificatesInfo()
+{
+  std::string out;
+
+  if (!conn.secureConnection)
+    return "";
+  if (!conn.certificates_info_present)
+    SSLGetCertificatesInfo();
+
+  for (auto c : conn.certificates)
+    {
+      std::tm dt;
+      gmtime_r(&c.notBefore, &dt);
+      std::string s( 128, '\0' );
+      strftime( &s[0], s.size(), "%Y/%m/%d %H:%M", &dt);
+      out+="Not Before: "+s+"\n";
+      gmtime_r(&c.notAfter, &dt);
+      strftime( &s[0], s.size(), "%Y/%m/%d %H:%M", &dt);
+      out+="Not After: "+s+"\n";
+      for (auto e : c.entries)
+	{
+	  out+=e.first+": "+e.second+"\n";
+	}
+      out+="--------------------------------\n";
+    }
+  return out;
+}
+
+void Glove::certChainAndKey(std::string chainFile, std::string keyFile)
+{
+  if (!chainFile.empty())
+    ssl_options.certChain = chainFile;
+  if (!keyFile.empty())
+    ssl_options.certKey = keyFile;
+}
+
+#endif
+
+int Glove::detectSecureService(const std::string& service)
+{
+  static std::vector<std::string> secureServices = {
+    "https",
+    "nntps",
+    "ldaps",
+    "ftps",
+    "ftps-data",
+    "telnets",
+    "imaps",
+    "ircs",
+    "pop3s",
+    "suucp"
+  };
+  if (std::find(secureServices.begin(), secureServices.end(), service)!=secureServices.end())
+    return ENABLE_SSL;
+  else
+    return DISABLE_SSL;
 }
 
 void Glove::disconnect(int how)
@@ -853,11 +1411,11 @@ bool Glove::connect_nonblocking(const sockaddr * saptr, socklen_t salen, const d
 {
   int flags, n, error;
 
-  flags = fcntl(sockfd, F_GETFL, 0);
-  fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+  flags = fcntl(conn.sockfd, F_GETFL, 0);
+  fcntl(conn.sockfd, F_SETFL, flags | O_NONBLOCK);
 
   error = 0;
-  if ( (n = CONNECT(sockfd, (struct sockaddr *) saptr, salen)) < 0) 
+  if ( (n = CONNECT(conn.sockfd, (struct sockaddr *) saptr, salen)) < 0) 
     {
       if (errno != EINPROGRESS)
 	return false;
@@ -876,13 +1434,13 @@ bool Glove::connect_nonblocking(const sockaddr * saptr, socklen_t salen, const d
       else
 	{
 	  size_t len = sizeof(error);
-	  if (GETSOCKOPT(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+	  if (GETSOCKOPT(conn.sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 	    {
 	      return false;           /* Solaris pending error */
 	    }
 	}
     }
-  fcntl(sockfd, F_SETFL, flags);  /* restore file status flags */
+  fcntl(conn.sockfd, F_SETFL, flags);  /* restore file status flags */
 
   if (error)
     {
@@ -901,7 +1459,7 @@ bool Glove::is_connected()
   if (!connected)
     return false;
 
-  int res = RECV(sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+  int res = RECV(conn.sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
   if (res<0)
     {
       // Maybe disconnected or maybe not...
@@ -932,7 +1490,7 @@ std::string Glove::getUnspecified(int domain)
     }
 }
 
-void Glove::listen(const int port, client_callback cb, std::string bind_ip, const unsigned backlog_queue, int domain)
+void Glove::listen(const int port, client_callback cb, std::string bind_ip, const unsigned backlog_queue, int domain, int secure, std::string certchain, std::string certkey)
 {
   if (bind_ip.empty())
     bind_ip = getUnspecified(domain);
@@ -940,8 +1498,25 @@ void Glove::listen(const int port, client_callback cb, std::string bind_ip, cons
   sockaddr_in address;
   memset(&address, 0, sizeof(address));
 
-  sockfd = SOCKET(domain, SOCK_STREAM, 0);
-  if (sockfd == -1)
+#if ENABLE_OPENSSL
+  certChainAndKey(certchain, certkey);
+  conn.secureConnection = DISABLE_SSL;
+  if (secure == UNDEFINED_SSL)
+    {
+      secure = ((!ssl_options.certKey.empty()) && (!ssl_options.certChain.empty()))?ENABLE_OPENSSL:DISABLE_SSL;
+    }
+  if (secure == AUTODETECT_SSL)
+    secure = detectSecureService(getServByPort(port));
+
+  if (secure == ENABLE_SSL)
+    {
+      /* Finally secure connection! */
+      SSLServerInitialize();
+      conn.secureConnection = ENABLE_SSL;
+    }
+#endif
+  conn.sockfd = SOCKET(domain, SOCK_STREAM, 0);
+  if (conn.sockfd == -1)
     throw GloveException(11, append_errno("Cannot create socket: "));
 
   address.sin_family = domain;
@@ -951,17 +1526,17 @@ void Glove::listen(const int port, client_callback cb, std::string bind_ip, cons
   if (server_options.server_reuseaddr)
     setsockopt(SO_REUSEADDR, 1);
 
-  if (BIND (sockfd, (struct sockaddr*) &address, sizeof(address))<0)
+  if (BIND (conn.sockfd, (struct sockaddr*) &address, sizeof(address))<0)
     {
-      CLOSE(sockfd);
+      CLOSE(conn.sockfd);
       throw GloveException(12, append_errno("Cannot bind to port: "));
     }
 
   connected = true;
-  if (LISTEN(sockfd, backlog_queue) == -1)
+  if (LISTEN(conn.sockfd, backlog_queue) == -1)
     {
       connected = false;
-      CLOSE(sockfd);
+      CLOSE(conn.sockfd);
       throw GloveException(13, append_errno("Cannot perform listen: "));
     }
 
@@ -996,8 +1571,9 @@ void Glove::create_worker(Glove::client_callback cb)
       std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
       return;
     }
-  int client_sockfd = ACCEPT (sockfd, (struct sockaddr *)&client, &client_len);
-  if (client_sockfd<0)
+  Conn_description client_conn;
+  client_conn.sockfd = ACCEPT (conn.sockfd, (struct sockaddr *)&client, &client_len);
+  if (client_conn.sockfd<0)
     {
       // Error!! But not big enough to throw an exception
       return;
@@ -1020,9 +1596,9 @@ void Glove::create_worker(Glove::client_callback cb)
 
   Client *c;
   if (server_options.copy_options)
-    c = new Client(client_sockfd, ipaddress, hostname, default_values);
+    c = new Client(client_conn, ipaddress, hostname, default_values);
   else
-    c = new Client(client_sockfd, ipaddress, hostname);
+    c = new Client(client_conn, ipaddress, hostname);
 
   unsigned thisClient = clientId++;
   clients_connected.insert(std::pair<int, Client*>(thisClient, c));
@@ -1035,16 +1611,16 @@ void Glove::create_worker(Glove::client_callback cb)
   if (server_options.thread_clients)
     {
       std::thread (
-		   &Glove::launch_client, this, cb, c, client_sockfd, thisClient
+		   &Glove::launch_client, this, cb, c, client_conn, thisClient
 		   ).detach();
     }
   else
     {
-      launch_client(cb, c, client_sockfd, thisClient);
+      launch_client(cb, c, client_conn, thisClient);
     }
 }
 
-void Glove::launch_client(client_callback cb, Client *c, int client_sockfd, unsigned client_id)
+void Glove::launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id)
 {
   try
     {
@@ -1056,7 +1632,7 @@ void Glove::launch_client(client_callback cb, Client *c, int client_sockfd, unsi
 	_server_error_callback(*c, client_id, e);
     }
 
-  CLOSE(client_sockfd);
+  CLOSE(client_conn.sockfd);
   clients_connected.erase( clients_connected.find(client_id) );
 }
 
@@ -1072,7 +1648,7 @@ void GloveBase::get_address(std::string &ip, int &port, bool noexcp)
   sockaddr_in addr;
   socklen_t addrlen = sizeof(addr);
 
-  if (getsockname (sockfd, (sockaddr*)&addr, &addrlen)<0)
+  if (getsockname (conn.sockfd, (sockaddr*)&addr, &addrlen)<0)
     {
       if (!noexcp)
 	throw GloveException(19, append_errno("Error calling getsockname()"));

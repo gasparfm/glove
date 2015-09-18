@@ -7,6 +7,23 @@
 #ifndef _GLOVE_HPP
 #define _GLOVE_HPP 10
 
+/**
+ * By default enable openssl. This compiles glove with SSL support
+ * More complex but we can make a secure connection transparently
+ */
+#ifndef ENABLE_OPENSSL
+#   define ENABLE_OPENSSL 1
+#endif
+
+/**
+ * Library debug level.
+ *  > 0   :
+ *          - Loads SSL error strings
+ */
+#ifndef GLOVEDEBUG
+#   define GLOVEDEBUG 1
+#endif
+
 #include <exception>
 #include <string>
 #include <vector>
@@ -19,6 +36,13 @@
 #include <iostream>		// debug only
 #include <algorithm>
 #include <sys/socket.h>
+#include <netdb.h>
+
+#if ENABLE_OPENSSL
+#    include <openssl/rand.h>
+#    include <openssl/ssl.h>
+#    include <openssl/err.h>
+#endif
 
 /**
    Default timeout (in seconds)for all connections. Maybe you want to increase it a little bit,
@@ -50,6 +74,11 @@
    Default backlog queue for listen()
  */
 #define GLOVE_DEFAULT_BACKLOG_QUEUE 10
+
+/**
+ * Default CA path for certificate verifying
+ */
+#define GLOVE_DEFAULT_SSL_CAPATH "/etc/ssl/certs"
 
 namespace
 {
@@ -195,6 +224,28 @@ public:
     };
 
   /**
+   * Secure connection enable/disable
+   */
+  enum:int
+    {
+      /**
+       * Use default SSL Setting
+       */
+      UNDEFINED_SSL = -9,
+      /**
+       * Autodetect secure setting with the service
+       */
+      AUTODETECT_SSL = -1,
+      /**
+       * Service connection/server is secure
+       */
+      ENABLE_SSL = 1,
+      /**
+       * Service connection/server is unsecure
+       */
+      DISABLE_SSL = 2
+    };
+  /**
    * Filters can be done before sending data of after receiving data
    */
   enum filter_type
@@ -338,7 +389,7 @@ public:
    */
   int get_sockfd()
   {
-    return sockfd;
+    return conn.sockfd;
   }
 
   /**
@@ -820,6 +871,16 @@ public:
   static uri get_from_uri (const std::string &uristring, bool resolve=true, std::string service_separator="");
 
   // some more tools
+
+  /**
+   * GetServByPort wrapper
+   *
+   * @param port Port
+   *
+   * @return Service name in string
+   */
+  static std::string getServByPort(int port);
+
   /**
    * URL Encode string. To make it suitable for trasceiving with some protocols.
    * borrowed from original knot https://github.com/r-lyeh/knot
@@ -865,8 +926,59 @@ public:
   static std::string base64_decode(std::string const& s);
 
 protected:
+#if ENABLE_OPENSSL
+  struct SSL_certificate
+  {
+    /* More stuff in the future! */
+    /** Certificate  */
+    X509* cert;
+    /** Not before as time_t  */
+    time_t notBefore;
+    /** Not after as time_t  */
+    time_t notAfter;
+    /** Certificate entries  */
+    std::map<std::string, std::string> entries;
+  };
+#endif
+
+  /**
+   * Connection description, used a struct in case of SSL connections,
+   * where we have to include some more information.
+   */
+  struct Conn_description
+  {
+    /** Socket descriptor  */
+    int sockfd;
+    int secureConnection;
+#if ENABLE_OPENSSL
+    /** SSL Handler  */
+    SSL* ssl;
+    /** SSL Context  */
+    SSL_CTX* ctx;
+    /** Certificate verification result (client)  */
+    long cert_verify_result;
+    /** Cipher info is loaded  */
+    bool cipher_info_present;
+    /** Certificates info loaded  */
+    bool certificates_info_present;
+    /** Certificate error string  */
+    std::string cert_error_string;
+    /** SSL Version used  */
+    std::string ssl_version;
+    /** Cipher name  */
+    std::string cipher_name;
+    /** Cipher version  */
+    std::string cipher_version;
+    /** Cipher description  */
+    std::string cipher_description;
+    /** Certificates information  */
+    std::vector<SSL_certificate> certificates;
+#endif
+  };
   /** socket descriptor  */
-  int sockfd;
+  /* int sockfd; */
+  /** Connection descriptor  */
+  Conn_description conn;
   /** connection start moment  */
   std::chrono::time_point<std::chrono::system_clock> start_dtm;
   /** Current connection info  */
@@ -999,9 +1111,9 @@ public:
      * @param ipaddress IP Address of this client
      * @param host      Host
      */
-    Client(int sockfd, std::string ipaddress, std::string host)
+    Client(Conn_description conn, std::string ipaddress, std::string host)
     {
-      this->sockfd = sockfd;
+      this->conn = conn;
       this->connectionInfo.ip_address = ipaddress;
       this->connectionInfo.host = host;
     }
@@ -1014,7 +1126,7 @@ public:
      * @param host      Host
      * @param options   Default options for this client
      */
-    Client(int sockfd, std::string ipaddress, std::string host, local_options options):Client(sockfd, ipaddress, host)
+    Client(Conn_description conn, std::string ipaddress, std::string host, local_options options):Client(conn, ipaddress, host)
     {
       default_values = options;
     }
@@ -1066,6 +1178,34 @@ public:
   using client_callback = std::function<int (Glove::Client &)>;
 
   /**
+   * SSL Methods available (up to OpenSSL 1.0.1f)
+   * Please use SSLv3 only when strictly necessary (I know there are
+   * still lot of services that use this version).
+   */
+  enum ESSL_Methods
+    {
+      SSLv23,
+      SSLv3,		/* Deprecated!*/
+      TLSv1,
+      TLSv1_1,
+      TLSv1_2,
+      DTLSv1
+    };
+
+  enum:unsigned
+    {
+      /** Verify CA */
+      SSL_FLAG_VERIFY_CA       = 1,
+      /** Fail on invalid CA (on client connections)  */
+      SSL_FLAG_FAIL_INVALID_CA = 2,
+      /** Gets cipher information on connection  */
+      SSL_FLAG_GET_CIPHER_INFO = 4,
+      /** Gets certificate information on connection  */
+      SSL_FLAG_GET_CERT_INFO   = 8,
+      /** Enable all flags  */
+      SSL_FLAG_ALL             = 65535
+    };
+  /**
    * A server error callback. What we run when there is a problem with a client
    *
    * void problem (Client &c, int clientId, GloveException& e)
@@ -1099,8 +1239,10 @@ public:
    * @param port    Port
    * @param timeout Timeout in seconds (After this time, the connection will be disabled.
    * @param domain  Defaults to GLOVE_DEFAULT_DOMAIN or AF_INET
+   * @param secure  Make secure connection using SSL (defaults AUTODETECT_SSL, that is
+   *                                                  use secure connection if service is secure).
    */
-  Glove( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN);
+  Glove( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
 
   /**
    * Destruction and cleanup
@@ -1118,14 +1260,30 @@ public:
   static std::vector<hostinfo> resolveHost(const std::string& host);
 
   /**
+   * Detects a secure service BY ITS NAME. The other way may be
+   * trying to stablish a secure connection to the server. This is
+   * much more accurate, but slower. Maybe in a future version we
+   * can make a AUTODETECT_SSL_SLOW argument that tries the secure
+   * connection.
+   * This method *is present* even if not compiled with the
+   * ENABLE_OPENSSL directive.
+   *
+   * @param service Service to test
+   *
+   * @return ENABLE_SSL or DISABLE_SSL
+   */
+  static int detectSecureService(const std::string& service);
+
+  /**
    * Connect to a server (as a client)
    *
    * @param host    Host
    * @param port    Port
    * @param timeout Timeout in seconds
    * @param domain  Domain
+   * @param secure  Stablish a secure connection
    */
-  void connect ( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN);
+  void connect(const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
 
   /**
    * Disconnect
@@ -1184,13 +1342,16 @@ public:
   /**
    * Listen for connections (as a server)
    *
-   * @param port    Port
-   * @param cb      Callback to execute when a client comes
-   * @param bind_ip IP or device to bind to
-   * @param backlog Backlog queue. @see Glove()
-   * @param domain  Domain
+   * @param port      Port
+   * @param cb        Callback to execute when a client comes
+   * @param bind_ip   IP or device to bind to
+   * @param backlog   Backlog queue. @see Glove()
+   * @param domain    Domain
+   * @param secure    Make a secure connection directly
+   * @param certchain Certificate chain (overrides default)
+   * @param certkey   Certificate key (overrides default)
    */
-  void listen(const int port, client_callback cb, std::string bind_ip, const unsigned backlog_queue, int domain = GLOVE_DEFAULT_DOMAIN);
+  void listen(const int port, client_callback cb, std::string bind_ip, const unsigned backlog_queue, int domain = GLOVE_DEFAULT_DOMAIN, int secure=UNDEFINED_SSL, std::string certchain="", std::string certkey="");
 
   /**
    * Setter for server_error_callback option
@@ -1254,7 +1415,73 @@ public:
   {
     return clients_connected;
   }
+#if ENABLE_OPENSSL
+  /**
+   * Get SSL Verify state. But with some things more
+   *
+   * @return SSL Verify state constant: 
+   *     - 0  = OK
+   *     - >0 = SSL ERROR (see man verify)
+   *     - -1 = Not a secure connection (Glove's own value)
+   */
+  long getSSLVerifyState();
 
+  /**
+   * Get SSL Verify state in string
+   *
+   * @return SSL Verify state in string (or "Not a secure connection" if so.
+   */
+  std::string getSSLVerifyString();
+
+  /**
+   * Get cipher and connection information and store in connection variables
+   */
+  void SSLGetCipherInfo();
+
+  /**
+   * Gets SSL Version used in this connection
+   *
+   * @return result
+   */
+  std::string getSSLVersion();
+
+  /**
+   * Gets SSL Cipher name 
+   *
+   * @return result
+   */
+  std::string getSSLCipherName();
+
+  /**
+   * Gets SSL Cipher Version
+   *
+   * @return result
+   */
+  std::string getSSLCipherVersion();
+
+  /**
+   * Gets SSL Cipher description
+   *
+   * @return result
+   */
+  std::string getSSLCipherDescription();
+
+  /**
+   * Returns an string with all the cipher information
+   */
+  std::string debugCipherInfo();
+
+  /**
+   * Gets certificates information
+   */
+  void SSLGetCertificatesInfo();
+
+  /**
+   * Debug certificates info
+   */
+  std::string debugCertificatesInfo();
+
+#endif
   // server option configuration example
   // bool resolve_hostnames(bool val)
   // {
@@ -1330,13 +1557,89 @@ public:
    */
   option_conf(server_options, bool, copy_options);
 
+#if ENABLE_OPENSSL
+  /**
+   * Getter and setter for SSL Method
+   * ESSL_Methods ssl_method(ESSL_Methods new);
+   * ESSL_Methods ssl_method();
+   */
+  option_conf(ssl_options, ESSL_Methods, ssl_method);
+
+  /**
+   * Getter and setter for Certificate key file
+   * std::string certKey(std::string new);
+   * std::string certKey();
+   */
+  option_conf(ssl_options, std::string, certKey);
+
+  /**
+   * Getter and setter for Certificate chain file
+   * std::string certChain(std::string new);
+   * std::string certChain();
+   */
+  option_conf(ssl_options, std::string, certChain);
+
+  void certChainAndKey(std::string chainFile, std::string keyFile);
+#endif
+
 protected:
   // static timeval as_timeval ( double seconds );
   bool connect_nonblocking ( const sockaddr *saptr, socklen_t salen, const double timeout);
   void create_worker(client_callback cb);
-  void launch_client(client_callback cb, Client *c, int client_sockfd, unsigned client_id);
+  void launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id);
   bool test_connected();
+  void fill_connection_info(addrinfo* rp, int port);
+#if ENABLE_OPENSSL
+  /**
+   * Initializes ssl_options with default values
+   */
+  void setSSLDefaultValues();
 
+  /**
+   * Performs SSL client handshake
+   * This method is *only present if ENABLE_OPENSSL is defined
+   *
+   * @param exception_on_handshake_failure self-explanatory
+   *
+   * @return true if connected, false if don't (but if the exception is enabled,
+   *         it will return always TRUE).
+   */
+  bool SSLClientHandshake(bool exception_on_handshake_failure=true);
+
+  /**
+   * Initialize openSSL
+   */
+  void initializeOpenSSL();
+
+  /**
+   * Initializes openSSL, add algorithms, create context
+   * and loads certificates. All the dirty work
+   */
+  void SSLServerInitialize();
+
+  /**
+   * Gets desired SSL client Method to connect a server.
+   * This can be configured later
+   */
+  const SSL_METHOD* getSSLClientMethod();
+
+  struct
+  {
+    ESSL_Methods ssl_method;
+    /* Flags of SSL connection */
+    unsigned flags;
+    /** Path for CA certificates (as client, for verification) */
+    std::string CApath;
+    /** Certificate key file (for servers) */
+    std::string certKey;
+    /** Certificate chain file (for servers)  */
+    std::string certChain;
+  } ssl_options;
+  /**
+   * OpenSSL is initialized?
+   */
+  static bool openSSLInitialized;
+#endif
   // status
   bool connected;
 

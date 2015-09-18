@@ -14,11 +14,12 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
-*  20150403 : Begin this project
-*  20150404 : Added HTTP Response data
-*  20150410 : Some bug fixing
-*  20150410 : Errors separated to GloveHttpErrors
+*  20150430 : Some documentation for Doxygen in the .h
 *  20150411 : Basic virtualHost support
+*  20150410 : Errors separated to GloveHttpErrors
+*  20150410 : Some bug fixing
+*  20150404 : Added HTTP Response data
+*  20150403 : Begin this project
 * 
 * To-do:
 *   - Error checking for addResponseProcessor() and addResponseGenericProcessor()
