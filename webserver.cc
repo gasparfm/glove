@@ -17,7 +17,7 @@
 *
 *
 * Compilation:
-*  $ g++ -g -o webserver webserver.cpp glovehttpserver.cpp glove.o -std=c++11 -lpthread
+*  $ g++ -g -o webserver webserver.cpp glovehttpserver.cpp glove.o -std=c++11 -lpthread -lcrypto -lssl
 *
 *************************************************************/
 

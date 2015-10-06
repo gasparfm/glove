@@ -16,9 +16,9 @@
 *
 *
 *
-*
-*
-*
+* Compile with:
+* 
+* $ g++ -o example4 example4.cc  glove.cpp -std=c++11 -lpthread -lssl -lcrypto
 *************************************************************/
 
 #include "glove.hpp"

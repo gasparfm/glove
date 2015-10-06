@@ -257,7 +257,7 @@ const short GloveHttpErrors::ALL_OK = 0;
 const short GloveHttpErrors::FILE_CANNOT_READ = 1;
 const short GloveHttpErrors::BAD_HOST_NAME = 10;
 const short GloveHttpErrors::BAD_ALIAS_NAME = 11;
-const short GloveHttpErrors::HOST_NOT_FOUND = 12;
+const short GloveHttpErrors::CANT_FIND_HOST = 12;
 const short GloveHttpErrors::HOST_ALREADY_FOUND = 13;
 const short GloveHttpErrors::ERROR_SHORT_REQUEST = 20;
 const short GloveHttpErrors::ERROR_NO_URI = 21;
@@ -716,7 +716,7 @@ short GloveHttpServer::addVhost(std::string name, std::vector<std::string> alias
 short GloveHttpServer::addVhostAlias(std::string name, std::string alias)
 {
   if (vhosts.find(name) == vhosts.end())
-    return GloveHttpErrors::HOST_NOT_FOUND;
+    return GloveHttpErrors::CANT_FIND_HOST;
 
   if (!validHost(alias))
     return GloveHttpErrors::BAD_ALIAS_NAME;
@@ -727,7 +727,7 @@ short GloveHttpServer::addVhostAlias(std::string name, std::string alias)
 short GloveHttpServer::addVhostAlias(std::string name, std::vector<std::string> aliases)
 {
   if (vhosts.find(name) == vhosts.end())
-    return GloveHttpErrors::HOST_NOT_FOUND;
+    return GloveHttpErrors::CANT_FIND_HOST;
 
   for (auto al : aliases)
     {

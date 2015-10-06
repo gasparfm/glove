@@ -37,7 +37,7 @@ class GloveHttpErrors
   /** When you try to create a new alias */
   static const short BAD_ALIAS_NAME;
   /** When you try to retrieve host information */
-  static const short HOST_NOT_FOUND;
+  static const short CANT_FIND_HOST;
   /** When you try to create an existing vhost */
   static const short HOST_ALREADY_FOUND;
 
