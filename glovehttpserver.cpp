@@ -1094,11 +1094,14 @@ std::string GloveHttpServer::getMimeType(std::string extension)
 void GloveHttpServer::responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response)
 {
   response.clear();
+  std::string msg = response.responseVar("errorMessage");
+  if (msg.empty())
+    msg = request.server()->responseMsg(MESSAGE_NOTFOUND);
   response << string_replace(request.server()->autoResponses(request.getVhost(), GloveHttpServer::RESPONSE_ERROR),
 		      {
 			{"{:title}", std::to_string(response.code())+" "+response.responseMessage()},
 			{"{:header}", response.responseMessage()},
-			{"{:message}", request.getMessage(request.server()->responseMsg(MESSAGE_NOTFOUND))},
+			{"{:message}", request.getMessage(msg)},
 			{"{:signature}",request.server()->serverSignature(request)}
 		      });
 }

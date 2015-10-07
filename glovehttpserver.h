@@ -203,6 +203,26 @@ class GloveHttpResponse
     return mn(out);
   }
 
+  inline std::string responseVar(std::string key, std::string value)
+  {
+    this->responseVars[key] = value;
+    return this->responseVars[key];
+  }
+
+  inline std::string responseVar(std::string key)
+  {
+    return this->responseVars[key];
+  }
+
+  inline std::string responseVar(std::map<std::string, std::string> keyvalmap)
+  {
+    for (auto x : keyvalmap)
+      {
+	this->responseVars[x.first] = x.second;
+      }
+    return "";
+  }
+
   /* Response codes! */
 
   /* 1XX */
@@ -289,9 +309,10 @@ class GloveHttpResponse
     std::string description;
   };
   static const std::map<short, ResponseCode> responseCodes;
-
+  /* You can use this key-value storage to pass data between through responses/templates or
+     even response processors. */
+  std::map<std::string, std::string> responseVars;
   std::string getHeaderVary();
-
 };
 
 using _url_callback = std::function<void(GloveHttpRequest&, GloveHttpResponse&)>;
