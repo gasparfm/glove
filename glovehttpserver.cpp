@@ -14,6 +14,8 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20151008 : Create fileServerExt to include local file paths
+*  20151007 : 5 more MIME Types
 *  20150430 : Some documentation for Doxygen in the .h
 *  20150411 : Basic virtualHost support
 *  20150410 : Errors separated to GloveHttpErrors
@@ -31,6 +33,9 @@
 *   - Max. size of strings
 *   - Size test of strings
 *   - Be able to process FastCGI requests to use with Apache/NGinx and more
+*   - Keepalive
+*   - Compression
+*   - Cache managing
 *
 * MIT Licensed:
 * Copyright (c) 2014 Gaspar Fernández
@@ -271,7 +276,15 @@ const short GloveHttpServer::MESSAGE_NOTFOUND = 666;
 
 std::string GloveHttpServer::_unknownMimeType = "application/octet-stream";
 std::map<std::string, std::string> GloveHttpServer::_mimeTypes = {
-  {"html", "text/html"}, {"jpg", "image/jpeg"}, {"png", "image/png"}
+  /* page parts */
+  {"html", "text/html"},
+  {"php", "text/html"},
+  {"css", "text/css"},
+  {"js", "text/javascript"},
+  {"woff", "application/font-woff"},
+  /* Images */
+  {"jpg", "image/jpeg"}, 
+  {"png", "image/png"}
 };
 
 const std::map<short, std::string> GloveHttpServer::_defaultMessages = {
@@ -417,7 +430,7 @@ GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, in
   srv(server), c(c), error(error), raw_location(raw_location), method(method), data(data), headers(httpheaders)
 {
   location = Glove::urldecode(raw_location);
-
+  std::cout << "NEW REQUEST location: "<<location<<std::endl;
   // More services soon !!
   std::string service = "http://";
 
@@ -550,7 +563,7 @@ void GloveHttpResponse::send(GloveHttpRequest &request, Glove::Client &client)
   client << outputStr;
 }
 
-short GloveHttpResponse::file(std::string filename, bool addheaders)
+short GloveHttpResponse::file(std::string filename, bool addheaders, std::string contentType)
 {
   std::string extension = fileExtension(filename);
   std::string fileContents = extractFile(filename.c_str());
@@ -560,7 +573,7 @@ short GloveHttpResponse::file(std::string filename, bool addheaders)
       return GloveHttpErrors::FILE_CANNOT_READ;
     }
 
-  *this << setContentType(GloveHttpServer::getMimeType(extension));
+  *this << setContentType((contentType.empty())?GloveHttpServer::getMimeType(extension):contentType);
   *this << fileContents;
   return GloveHttpErrors::ALL_OK;
 }
@@ -996,6 +1009,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
     error = GloveHttpErrors::ERROR_TIMED_OUT;
 
   GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
+  /* new request */
   GloveHttpResponse response(_defaultContentType);
   auto vhost = getVHost(request.getVhost());
   if (error)
@@ -1080,6 +1094,15 @@ void GloveHttpServer::addMimeType(std::string extension, std::string mimeType)
 void GloveHttpServer::fileServer(GloveHttpRequest &request, GloveHttpResponse& response)
 {
   response.file(request.special["filename"]);
+}
+
+void GloveHttpServer::fileServerExt(GloveHttpRequest &request, GloveHttpResponse& response, std::string localPath)
+{
+  std::cout << "SERVING: "<<localPath+request.special["filename"]<<std::endl;
+  if (localPath.empty())
+    response.file(request.special["filename"]); /* just as fileServer*/
+  else
+    response.file(localPath+request.special["filename"]);
 }
 
 std::string GloveHttpServer::getMimeType(std::string extension)

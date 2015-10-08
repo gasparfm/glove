@@ -162,6 +162,7 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h> // TCP_NODELAY 
 #include <thread>
+#include <mutex>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -1600,14 +1601,16 @@ void Glove::create_worker(Glove::client_callback cb)
   else
     c = new Client(client_conn, ipaddress, hostname);
 
+  static std::mutex workermutex;
+  workermutex.lock();
   unsigned thisClient = clientId++;
   clients_connected.insert(std::pair<int, Client*>(thisClient, c));
+  workermutex.unlock();
 
   // debug clients
   // for (auto i = clients_connected.begin(); i != clients_connected.end(); i++) {
   //   std::cout << "CLIENT ID: *"<<i->first<<"*"<<std::endl;
   // }
-
   if (server_options.thread_clients)
     {
       std::thread (

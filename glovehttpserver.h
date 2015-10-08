@@ -10,9 +10,9 @@
 #include <sstream>
 
 /** Glove Http Server Version (numeric)  */
-#define GHS_VERSION 0001001
+#define GHS_VERSION 0001005
 /** Glove Http Server Version (string)  */
-#define GHS_VERSION_STR "0.1.1"
+#define GHS_VERSION_STR "0.1.5"
 
 class GloveHttpServer;
 
@@ -126,7 +126,7 @@ class GloveHttpResponse
 
   void clear();
   void send(GloveHttpRequest &request, Glove::Client &client);
-  short file(std::string filename, bool addheaders=true);
+  short file(std::string filename, bool addheaders=true, std::string contentType="");
   short code(short rc=0);
 
   static std::string responseMessage(short responseCode);
@@ -383,6 +383,7 @@ class GloveHttpServer
 
   /* Common callbacks */
   static void fileServer(GloveHttpRequest &request, GloveHttpResponse& response);
+  static void fileServerExt(GloveHttpRequest &request, GloveHttpResponse& response, std::string localPath);
 
   /* Default response processord */
   static void response404Processor(GloveHttpRequest& request, GloveHttpResponse& response);
