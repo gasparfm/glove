@@ -14,6 +14,8 @@
 /** Glove Http Server Version (string)  */
 #define GHS_VERSION_STR "0.1.5"
 
+#define GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT 5
+
 class GloveHttpServer;
 
 /** Glove Http Errors  */
@@ -344,7 +346,7 @@ class GloveHttpServer
   static const std::vector<std::string> StandardMethods;
 
   /* Server configuration */
-  GloveHttpServer(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN);
+  GloveHttpServer(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT);
   virtual ~GloveHttpServer();
   std::string defaultContentType(std::string dct="");
 
@@ -398,11 +400,58 @@ class GloveHttpServer
   /* Response IDs */
   static const short int RESPONSE_ERROR;
 
+  /* configuration */
+  inline double timeout(double value)
+  {
+    return this->server->timeout(value);
+  }
 
+  inline double timeout()
+  {
+    return this->server->timeout();
+  }
+
+  inline double max_accepted_clients(double value)
+  {
+    return this->server->max_accepted_clients(value);
+  }
+
+  inline double max_accepted_clients()
+  {
+    return this->server->max_accepted_clients();
+  }
+
+  /**
+   * Macro to auto-generate getters and setters for some settings.
+   * From glove.hpp
+   *
+   * @param container  Struct where all values are
+   * @param type       Data type (int, double, bool)
+   * @param option     Option to be set or got
+   *
+   * @return Current value
+   */
+#define option_conf(container, type, option) type option(type val)	\
+  {									\
+    return (container.option=val);					\
+  }									\
+  									\
+  type option()								\
+  {									\
+    return container.option;						\
+  }
+
+  option_conf(ghoptions, double, keepalive_timeout);
+
+#undef option_conf
   /* Mime types */
   /* Who would want different MIME Types in different instances
    of the server? */
  protected:
+  struct
+  {
+    double keepalive_timeout;	/* if 0, keepalive is disabled */
+  } ghoptions;
   /* We could make this by method in the future... */
   struct Httpmetrics
   {
@@ -445,6 +494,8 @@ class GloveHttpServer
   void initializeMetrics();
   bool findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
   int clientConnection(Glove::Client &client);
+  int _receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout=0);
+
   void gloveError(Glove::Client &client, int clientId, GloveException &e);
   VirtualHost* getVHost(std::string name);
   void addMetrics(GloveHttpRequest& request, double queryTime, double processingTime, double responseTime);

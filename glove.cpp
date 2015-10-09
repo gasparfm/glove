@@ -1601,11 +1601,10 @@ void Glove::create_worker(Glove::client_callback cb)
   else
     c = new Client(client_conn, ipaddress, hostname);
 
-  static std::mutex workermutex;
-  workermutex.lock();
+  clients_connected_mutex.lock();
   unsigned thisClient = clientId++;
   clients_connected.insert(std::pair<int, Client*>(thisClient, c));
-  workermutex.unlock();
+  clients_connected_mutex.unlock();
 
   // debug clients
   // for (auto i = clients_connected.begin(); i != clients_connected.end(); i++) {
@@ -1636,7 +1635,9 @@ void Glove::launch_client(client_callback cb, Client *c, Conn_description client
     }
 
   CLOSE(client_conn.sockfd);
+  clients_connected_mutex.lock();
   clients_connected.erase( clients_connected.find(client_id) );
+  clients_connected_mutex.unlock();
 }
 
 void GloveBase::get_address(std::string &ip, int &port, bool noexcp)

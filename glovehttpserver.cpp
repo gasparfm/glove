@@ -14,6 +14,9 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20151009 : Bug fixing, max_clients and timeout added to the constructor
+*             GloveHttpServer. You also have getters and setters for that.
+*  20151009 : Added keep-alive support, with configurable keepalive_timeout
 *  20151008 : Create fileServerExt to include local file paths
 *  20151007 : 5 more MIME Types
 *  20150430 : Some documentation for Doxygen in the .h
@@ -430,7 +433,6 @@ GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, in
   srv(server), c(c), error(error), raw_location(raw_location), method(method), data(data), headers(httpheaders)
 {
   location = Glove::urldecode(raw_location);
-  std::cout << "NEW REQUEST location: "<<location<<std::endl;
   // More services soon !!
   std::string service = "http://";
 
@@ -789,13 +791,15 @@ GloveHttpServer::VirtualHost* GloveHttpServer::getVHost(std::string name)
   return NULL;
 }
 
-GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain):port(listenPort)
+GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout):port(listenPort)
 {
   namespace ph = std::placeholders;
 
   _serverSignature = "Glove Http Server/" GHS_VERSION_STR " at {:serverHost} Port {:serverPort}";
   _simpleSignature = "Glove Http Server/" GHS_VERSION_STR;
   _defaultContentType = "text/html; charset=UTF-8";
+
+  ghoptions.keepalive_timeout = keepalive_timeout;
 
   if (addVhost("%") != GloveHttpErrors::ALL_OK)
     return;
@@ -818,8 +822,8 @@ GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size
   		     std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3),
   		     backlog_queue,
   		     domain);
-  server->max_accepted_clients(2);
-  server->timeout(4);
+  server->max_accepted_clients(max_accepted_clients);
+  server->timeout(timeout);
 }
 
 GloveHttpServer::~GloveHttpServer()
@@ -893,31 +897,33 @@ bool GloveHttpServer::findRoute(VirtualHost& vhost, std::string method, GloveBas
   return false;
 }
 
-// Some code borrowed from knot:
-//   - https://github.com/gasparfm/knot
-// Original knot:
-//   - https://github.com/r-lyeh/knot
-int GloveHttpServer::clientConnection(Glove::Client &client)
+int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout)
 {
-  auto startTime = std::chrono::steady_clock::now();
-
-  std::cout << "IP: "<<client.get_address(true)<<std::endl;
-
-  std::string input, data, request_method, raw_location;
-  std::map<std::string, std::string> httpheaders;
-  int error = 0;
-  bool receiving = true;
   long content_length = -1;
   long payload_received = 0;
   long total_received = 0;
+  int error = 0;
   std::string::size_type first_crlf;
+  bool receiving = true;
+  std::string input;
+  double currentTimeout;
 
-  client >> Glove::Client::set_read_once(true);
-  client >> Glove::Client::set_exception_on_timeout(false);
+  if (timeout)			/* Maybe higher timeout when keepalive is on */
+    {
+      client.timeout(timeout);
+      client.timeout();
+    }
+
   while (receiving)
     {
       std::string recv;
       client >> recv;
+      if (timeout)
+	{
+	  client.timeout(currentTimeout);
+	  timeout=0;
+	}
+
       int bytes_received = recv.length();
 
       if (bytes_received == 0)
@@ -1003,63 +1009,95 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       if (content_length > -1 && payload_received >= content_length)
 	receiving = false;
     }
-  auto requestTime = std::chrono::steady_clock::now();
 
   if ( (!error) && (receiving) )
     error = GloveHttpErrors::ERROR_TIMED_OUT;
 
-  GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
-  /* new request */
-  GloveHttpResponse response(_defaultContentType);
-  auto vhost = getVHost(request.getVhost());
-  if (error)
+  return error;
+}
+
+// Some code borrowed from knot:
+//   - https://github.com/gasparfm/knot
+// Original knot:
+//   - https://github.com/r-lyeh/knot
+int GloveHttpServer::clientConnection(Glove::Client &client)
+{
+  std::cout << "IP: "<<client.get_address(true)<<std::endl;
+
+  bool finished = false;
+  unsigned totalRequests = 0;
+  client >> Glove::Client::set_read_once(true);
+  client >> Glove::Client::set_exception_on_timeout(false);
+  auto startTime = std::chrono::steady_clock::now();
+  do
     {
-      switch (error)
+      std::string data, request_method, raw_location;
+      std::map<std::string, std::string> httpheaders;
+      int error = 0;
+      error = _receiveData(client, httpheaders, data, request_method, raw_location, (totalRequests)?ghoptions.keepalive_timeout:0);
+      if (error == GloveHttpErrors::ERROR_TIMED_OUT)
+	return 0;
+
+      if ( (ghoptions.keepalive_timeout<=0) || (httpheaders["Connection"] != "keep-alive") ) 
+	finished = true;
+
+      auto requestTime = std::chrono::steady_clock::now();
+      GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
+      /* new request */
+      GloveHttpResponse response(_defaultContentType);
+      auto vhost = getVHost(request.getVhost());
+      if (error)
 	{
-	case GloveHttpErrors::ERROR_SHORT_REQUEST:
-	case GloveHttpErrors::ERROR_NO_URI:
-	  response<<GloveHttpResponse::setCode(GloveHttpResponse::BAD_REQUEST);
-	  break;
-	case GloveHttpErrors::ERROR_BAD_PROTOCOL:
-	  response<<GloveHttpResponse::setCode(GloveHttpResponse::VERSION_NOT_SUP);
-	  break;
-	default:
-	  response<<GloveHttpResponse::setCode(GloveHttpResponse::INTERNAL_ERROR);
-	}
-    }
-  else
-    {
-      GloveHttpUri *guri;
-      if (findRoute(*vhost, request_method, request.getUri(), guri, request.special))
-	{
-	  guri->callAction(request, response);
+	  switch (error)
+	    {
+	    case GloveHttpErrors::ERROR_SHORT_REQUEST:
+	    case GloveHttpErrors::ERROR_NO_URI:
+	      response<<GloveHttpResponse::setCode(GloveHttpResponse::BAD_REQUEST);
+	      break;
+	    case GloveHttpErrors::ERROR_BAD_PROTOCOL:
+	      response<<GloveHttpResponse::setCode(GloveHttpResponse::VERSION_NOT_SUP);
+	      break;
+	    default:
+	      response<<GloveHttpResponse::setCode(GloveHttpResponse::INTERNAL_ERROR);
+	    }
 	}
       else
 	{
-	  response<<GloveHttpResponse::setCode(GloveHttpResponse::NOT_FOUND);
-	  // Test for error responses...
+	  GloveHttpUri *guri;
+	  if (findRoute(*vhost, request_method, request.getUri(), guri, request.special))
+	    {
+	      guri->callAction(request, response);
+	    }
+	  else
+	    {
+	      response<<GloveHttpResponse::setCode(GloveHttpResponse::NOT_FOUND);
+	      // Test for error responses...
+	    }
 	}
-    }
-  auto resproc = vhost->responseProcessors.find(response.code());
-  if (resproc != vhost->responseProcessors.end())
-    resproc->second(request, response);
-  else
-    {
-      // Generic processors
-      resproc = vhost->responseProcessors.find(-response.code()/100);
+      auto resproc = vhost->responseProcessors.find(response.code());
       if (resproc != vhost->responseProcessors.end())
+	resproc->second(request, response);
+      else
 	{
-	  resproc->second(request, response);
+	  // Generic processors
+	  resproc = vhost->responseProcessors.find(-response.code()/100);
+	  if (resproc != vhost->responseProcessors.end())
+	    {
+	      resproc->second(request, response);
+	    }
 	}
-    }
-  // request chrono, processing chrono..
-  auto processingTime = std::chrono::steady_clock::now();
-  response.send(request, client);
-  auto responseTime = std::chrono::steady_clock::now();
-  addMetrics(request, (double) std::chrono::duration_cast<std::chrono::milliseconds>(requestTime - startTime).count() / 1000,
-	     (double) std::chrono::duration_cast<std::chrono::milliseconds>(processingTime - requestTime).count() / 1000,
-	     (double) std::chrono::duration_cast<std::chrono::milliseconds>(responseTime - requestTime).count() / 1000
-    );
+      // request chrono, processing chrono..
+      auto processingTime = std::chrono::steady_clock::now();
+      response.send(request, client);
+      auto responseTime = std::chrono::steady_clock::now();
+      addMetrics(request, (double) std::chrono::duration_cast<std::chrono::milliseconds>(requestTime - startTime).count() / 1000,
+		 (double) std::chrono::duration_cast<std::chrono::milliseconds>(processingTime - requestTime).count() / 1000,
+		 (double) std::chrono::duration_cast<std::chrono::milliseconds>(responseTime - requestTime).count() / 1000
+		 );
+      ++totalRequests;
+      /* Maybe we can store this measure too */
+      startTime = std::chrono::steady_clock::now();
+    } while (!finished);
 }
 
 void GloveHttpServer::gloveError(Glove::Client &client, int clientId, GloveException &e)
@@ -1098,7 +1136,6 @@ void GloveHttpServer::fileServer(GloveHttpRequest &request, GloveHttpResponse& r
 
 void GloveHttpServer::fileServerExt(GloveHttpRequest &request, GloveHttpResponse& response, std::string localPath)
 {
-  std::cout << "SERVING: "<<localPath+request.special["filename"]<<std::endl;
   if (localPath.empty())
     response.file(request.special["filename"]); /* just as fileServer*/
   else

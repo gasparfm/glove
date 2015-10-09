@@ -1667,6 +1667,7 @@ protected:
   // multiple clients
   bool accept_clients;
   std::map <unsigned, Client*> clients_connected;
+  std::mutex clients_connected_mutex;
   unsigned clientId;
 };
 
