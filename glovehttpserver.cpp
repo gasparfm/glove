@@ -1045,6 +1045,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
       /* new request */
       GloveHttpResponse response(_defaultContentType);
+      std::cout << "Request: "<<raw_location<<std::endl;
       auto vhost = getVHost(request.getVhost());
       if (error)
 	{
