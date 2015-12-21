@@ -16,6 +16,13 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog:
+*  20151216 : - Clean SSL context and structure when disconnect()
+*  20151212 : - URI struct now know if it's a secure or a non-secure service.
+*             - Bug fixed: Segfault when server has port open but isn't accepting connections
+*             - connect() now support Glove::uri and string as uri
+*             - Glove() constructor now support direct URI connection
+*  20151211 : - Automatically get port when getting from URI
+*  20151210 : - Bug fixing in non-ssl connections trying to call ssl functions (regression)
 *  20150503 : - Bug fixing in non-ssl connections trying to call ssl functions
 *  20150502 : - Error documentation.
 *             - Changed error 100 "Peer shutdown" to error 21
@@ -38,7 +45,7 @@
 *  20140807 : Begin this project
 *
 * To-do:
-*  1 - SSL shutdown. Context and handler cleanup
+*  1 - SSL shutdown. Context and handler cleanup !!!
 *  2 - epoll support
 *  6 - be able to connect with protocol/service names
 *  7 - set_option(...) allowing a variadic template to set every client or server option
@@ -205,6 +212,7 @@
 #define SHUTDOWN(A,B)             ::shutdown((A),(B))
 
 const char* GloveBase::CRLF = "\r\n";
+const char* GloveBase::CRLF2= "\r\n\r\n";
 
 #if ENABLE_OPENSSL
 bool Glove::openSSLInitialized = false;
@@ -429,7 +437,6 @@ void GloveBase::_send(const std::string &data)
 #endif
 	// msg_nosignal avoid systems signals
 	bytes_sent = SEND( conn.sockfd, out.c_str(), out.size(), MSG_NOSIGNAL);
-
       if (bytes_sent == -1)
 	{
 	  throw GloveException(6, append_errno("Socket error when sending: "));
@@ -508,7 +515,7 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 	}
 #if ENABLE_OPENSSL
       //      pending_bytes = SSL_pending(conn.ssl);
-      if ( (conn.secureConnection) && (pending_bytes = SSL_pending(conn.ssl)) )
+      if ( (conn.secureConnection == ENABLE_SSL) && (pending_bytes = SSL_pending(conn.ssl)) )
 	{
 	  continue;
 	}
@@ -589,8 +596,11 @@ void GloveBase::disconnect(int how)
       if (CLOSE(conn.sockfd) < 0)
 	throw GloveException(10, append_errno("Socket was not closed successfully: "));
     }
-  else if (SHUTDOWN(conn.sockfd, how) < 0)
-    throw GloveException(20, append_errno("Socket was not shutted down successfully"));
+  else 
+    {
+      if (SHUTDOWN(conn.sockfd, how) < 0)
+	throw GloveException(20, append_errno("Socket was not shutted down successfully"));
+    }
 }
 
 std::string GloveBase::user_and_pass(const std::string& user, const std::string &password)
@@ -659,9 +669,12 @@ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resol
   auto _space = uristring.find(service_separator);
 
   if (_space == std::string::npos)
-    throw GloveUriException(1005, "Can't find service separator '"+service_separator+"' in provided URI");
+    throw GloveUriException(1005, "Can't find service separator '"+service_separator+"' in provided URI ('"+uristring+"')");
 
   _uristring = uristring.substr(_space+service_separator.length());
+  _uri.service=uristring.substr(0, _space);
+  _uri.secure= (Glove::detectSecureService(_uri.service) == ENABLE_SSL);
+
   auto _atsign = _uristring.find_first_of('@');
   if (_atsign != std::string::npos)
     {
@@ -705,8 +718,12 @@ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resol
 	    }
 	  else
 	    {
-	      _uri.host = temp;
 	      _uri.port = 0;
+	      servent *srv = getservbyname(_uri.service.c_str(), "tcp");
+	      if (srv != NULL)
+		_uri.port = htons(srv->s_port);
+
+	      _uri.host = temp;
 	    }
 	  _uri.rawpath = _uristring.substr(_slash);
 	}
@@ -744,8 +761,6 @@ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resol
       start = _slash;
 
     } while (_slash = _uristring.find_first_of("/?#", _slash+1), start != _uristring.length() );
-
-  _uri.service=uristring.substr(0, _space);
 
   return _uri;
 }
@@ -950,6 +965,17 @@ Glove::Glove( const std::string& host, const int port, double timeout, int domai
   connect(host, port, timeout, domain, secure);
 }
 
+Glove::Glove(const Glove::uri &uri, double timeout, int domain, int secure)
+{
+  connect(uri, timeout, domain, secure);
+}
+
+Glove::Glove(const std::string& uri, double timeout, int domain, int secure)
+{
+  connect(uri, timeout, domain, secure);
+}
+
+
 Glove::~Glove()
 {
   if (_shutdown_on_destroy)
@@ -977,7 +1003,7 @@ void Glove::fill_connection_info(addrinfo *rp, int port)
 
       int error = getnameinfo(rp->ai_addr, rp->ai_addrlen, hostname, NI_MAXHOST, service, NI_MAXSERV, 0); 
       if (error != 0)
-	throw GloveException(2, append_errno("Failed to resolve: "));
+	throw GloveException(2, append_errno("Failed to resolve ("+std::to_string(error)+"): "));
       connectionInfo.host = hostname;
       connectionInfo.service = service;
     }
@@ -1016,7 +1042,7 @@ void Glove::connect(const std :: string & host, const int port, double timeout, 
 
   this->connected = false;
   // try to connect the server 
-  for (rp = servinfo; rp != NULL, this->connected==false; rp = rp->ai_next) 
+  for (rp = servinfo; rp != NULL && this->connected==false; rp = rp->ai_next) 
     {
       conn.sockfd = SOCKET (rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 
@@ -1055,7 +1081,7 @@ void Glove::connect(const std :: string & host, const int port, double timeout, 
   if (secure == AUTODETECT_SSL)
     secure = detectSecureService(connectionInfo.service);
 
-  if (secure)
+  if (secure == ENABLE_SSL)
     {
       bool hndshk = SSLClientHandshake();
       if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CIPHER_INFO) )
@@ -1066,6 +1092,19 @@ void Glove::connect(const std :: string & host, const int port, double timeout, 
     }
 # endif
   errno = 0;			// clear remaining connect_nonblocking error
+}
+
+void Glove::connect(GloveBase::uri uri, double timeout, int domain, int secure)
+{
+  if (secure == AUTODETECT_SSL)
+    secure = (uri.secure)?ENABLE_SSL:DISABLE_SSL;
+
+  connect(uri.host, uri.port, timeout, domain, secure);
+}
+
+void Glove::connect(const std::string uri, double timeout, int domain, int secure)
+{
+  connect(Glove::get_from_uri(uri, false), timeout, domain, secure);
 }
 
 #if ENABLE_OPENSSL
@@ -1182,7 +1221,7 @@ const SSL_METHOD* Glove::getSSLClientMethod()
 
 long Glove::getSSLVerifyState()
 {
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return -1;
 
   return conn.cert_verify_result;
@@ -1190,7 +1229,7 @@ long Glove::getSSLVerifyState()
 
 std::string Glove::getSSLVerifyString()
 {
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return "Not a secure connection";
 
   return conn.cert_error_string;
@@ -1201,7 +1240,7 @@ void Glove::SSLGetCipherInfo()
   if (conn.cipher_info_present)
     return;
 
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return;
   /* Verificar que conn.ssl SEA != NULL */
   conn.ssl_version = SSL_get_version(conn.ssl);
@@ -1256,7 +1295,7 @@ void Glove::SSLGetCertificatesInfo()
 
 std::string Glove::getSSLVersion()
 {
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return "";
   if (!conn.cipher_info_present)
     SSLGetCipherInfo();
@@ -1266,7 +1305,7 @@ std::string Glove::getSSLVersion()
 
 std::string Glove::getSSLCipherName()
 {
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return "";
   if (!conn.cipher_info_present)
     SSLGetCipherInfo();
@@ -1276,7 +1315,7 @@ std::string Glove::getSSLCipherName()
 
 std::string Glove::getSSLCipherVersion()
 {
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return "";
   if (!conn.cipher_info_present)
     SSLGetCipherInfo();
@@ -1286,7 +1325,7 @@ std::string Glove::getSSLCipherVersion()
 
 std::string Glove::getSSLCipherDescription()
 {
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return "";
   if (!conn.cipher_info_present)
     SSLGetCipherInfo();
@@ -1306,7 +1345,7 @@ std::string Glove::debugCertificatesInfo()
 {
   std::string out;
 
-  if (!conn.secureConnection)
+  if (conn.secureConnection == DISABLE_SSL)
     return "";
   if (!conn.certificates_info_present)
     SSLGetCertificatesInfo();
@@ -1355,16 +1394,29 @@ int Glove::detectSecureService(const std::string& service)
     "suucp"
   };
   if (std::find(secureServices.begin(), secureServices.end(), service)!=secureServices.end())
-    return ENABLE_SSL;
+    {
+      return ENABLE_SSL;
+    }
   else
-    return DISABLE_SSL;
+    {
+      return DISABLE_SSL;
+    }
 }
 
 void Glove::disconnect(int how)
 {
   if (!test_connected())
     return;
-
+  /* std::cout << "DISCONNECTING SOCKET\n"; */
+#if ENABLE_OPENSSL
+  /* If we opened a secure connection we must also close it */
+  if ( (how==SHUT_XX) && (conn.secureConnection == ENABLE_SSL) )
+    {
+      SSL_shutdown(conn.ssl);
+      SSL_CTX_free(conn.ctx);
+      SSL_free(conn.ssl);
+    }
+#endif
   GloveBase::disconnect(how);
   if (how==SHUT_XX)
     connected=false;
