@@ -1407,7 +1407,7 @@ void Glove::disconnect(int how)
 {
   if (!test_connected())
     return;
-  std::cout << "DISCONNECTING SOCKET\n";
+  /* std::cout << "DISCONNECTING SOCKET\n"; */
 #if ENABLE_OPENSSL
   /* If we opened a secure connection we must also close it */
   if ( (how==SHUT_XX) && (conn.secureConnection == ENABLE_SSL) )
