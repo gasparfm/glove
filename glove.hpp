@@ -295,6 +295,8 @@ public:
     std::string username;
     /** Password used  */
     std::string password;
+    /* Secure service? */
+    bool secure;
     /** List of hosts resolved by this host  */
     std::vector <GloveBase::hostinfo> ressolvedhosts;
     /** Port  */
@@ -317,7 +319,7 @@ public:
       out+="Arguments: "+rawarguments+"\n";
       for (auto _pi = arguments.begin(); _pi != arguments.end(); ++_pi)
 	out+= "   * "+_pi->first+" = "+_pi->second+"\n";
-      out+="Service: "+service+"\n";
+      out+="Service: "+service+" "+((secure)?"(SECURE)":"")+"\n";
       out+="Fragment: "+fragment+"\n";
       out+="Port: "+std::to_string(port)+"\n";
       out+="Username: "+username+"\n";
@@ -329,6 +331,9 @@ public:
 
   /** CRLF string => "\r\n" */
   static const char* CRLF;
+
+  /** CRLF2 string => "\r\n\r\n" */
+  static const char* CRLF2;
 
   /**
    * Default constructor with the default values:
@@ -1231,6 +1236,7 @@ public:
    * @param domain         Defaults to GLOVE_DEFAULT_DOMAIN or AF_INET
    */
   Glove(int port, client_callback cb, std::string bind_ip, const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, server_error_callback_t error_callback=nullptr, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN);
+
   // create client
   /**
    * Created directly a client and attempt to connect a server
@@ -1243,6 +1249,30 @@ public:
    *                                                  use secure connection if service is secure).
    */
   Glove( const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
+
+  /**
+   * Created directly a client and attempt to connect a server
+   *
+   * @param uri   Url to connect to
+   * @param timeout Timeout in seconds (After this time, the connection will be disabled.
+   * @param domain  Defaults to GLOVE_DEFAULT_DOMAIN or AF_INET
+   * @param secure  Make secure connection using SSL (defaults AUTODETECT_SSL, that is
+   *                                                  use secure connection if service is secure).
+   */
+  Glove( const Glove::uri &uri, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
+
+
+  /**
+   * Created directly a client and attempt to connect a server
+   *
+   * @param     Url to connect to
+   * @param timeout Timeout in seconds (After this time, the connection will be disabled.
+   * @param domain  Defaults to GLOVE_DEFAULT_DOMAIN or AF_INET
+   * @param secure  Make secure connection using SSL (defaults AUTODETECT_SSL, that is
+   *                                                  use secure connection if service is secure).
+   */
+  Glove( const std::string& uri, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
+
 
   /**
    * Destruction and cleanup
@@ -1284,6 +1314,26 @@ public:
    * @param secure  Stablish a secure connection
    */
   void connect(const std::string& host, const int port, double timeout = -1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
+
+  /**
+   * Connect to a server (as a client)
+   *
+   * @param uri     Direct URI where host and port will be inferred
+   * @param timeout Timeout in seconds
+   * @param domain  Domain
+   * @param secure  Stablish a secure connection
+   */
+  void connect(GloveBase::uri uri, double timeout=-1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
+
+  /**
+   * Connect to a server (as a client)
+   *
+   * @param uri     Direct URI where host and port will be inferred
+   * @param timeout Timeout in seconds
+   * @param domain  Domain
+   * @param secure  Stablish a secure connection
+   */
+  void connect(const std::string uri, double timeout=-1, int domain = GLOVE_DEFAULT_DOMAIN, int secure = AUTODETECT_SSL);
 
   /**
    * Disconnect
@@ -1578,6 +1628,23 @@ public:
    * std::string certChain();
    */
   option_conf(ssl_options, std::string, certChain);
+
+  /**
+   * Setter for SSL Flags
+   */
+  int SSLFlags(int status)
+  {
+    ssl_options.flags = status;
+    return status;
+  }
+
+  /**
+   * Getter for SSL Flags
+   */
+  int SSLFlags()
+  {
+    return ssl_options.flags;
+  }
 
   void certChainAndKey(std::string chainFile, std::string keyFile);
 #endif
