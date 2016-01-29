@@ -32,6 +32,7 @@
 #include <ctime>
 #include <chrono>
 #include <map>
+#include <list>
 #include <sstream>
 #include <iostream>		// debug only
 #include <algorithm>
@@ -80,11 +81,18 @@
  */
 #define GLOVE_DEFAULT_SSL_CAPATH "/etc/ssl/certs"
 
+/**
+ * Default connections buffer size. It is the max. number of historic incomming
+ * connections logged. It can give us information about old connections, clients
+ * and so on
+ */
+#define GLOVE_DEFAULT_MAX_CONNECTIONS_BUFFER 100
+
 namespace
 {
   // this is the type of std::cout
   typedef std::basic_ostream<char, std::char_traits<char> > ostream_type;
-
+	
   // this is the function signature of std::endl
   typedef ostream_type& (*ostream_manipulator)(ostream_type&);
 };
@@ -96,7 +104,6 @@ namespace
 class GloveException : public std::exception
 {
 public:
-
   /**
    * GloveException
    *
@@ -165,6 +172,8 @@ public:
 class GloveBase
 {
 public:
+  typedef std::chrono::system_clock::time_point time_point;
+
   /**
      Controls the behaviour of select()
    */
@@ -357,6 +366,8 @@ public:
   {
   }
 
+  static int matchIp(const uint32_t address, const uint32_t network, const uint8_t bits);
+  static int matchIp(const std::string address, const std::string cidr, bool notOnlyCIDR=false, bool noException=true);
   /**
    * Get connected host
    *
@@ -1095,6 +1106,17 @@ protected:
    * Creates a string with the errno appended. Not thread safe! As errno isn't
    */
   static std::string append_errno(std::string message);
+
+	/**
+	 *
+	 */
+	static std::pair<uint32_t, uint32_t> getNetworkAndMask(const std::string cidr, bool notOnlyCIDR, bool noException);
+
+	/**
+	 *
+	 */
+	static int inet_pton4(const std::string addr, in_addr* result, bool noException=true);
+
 };
 
 /**
@@ -1176,6 +1198,15 @@ public:
   };
 
   /**
+   * That's the filter function to be executed
+   * Possible returns:
+   *     > 0 : connection accepted
+   *     = 0 : current connection not affected by filter
+   *     < 0 : connection denied
+   */
+  using connection_filter_callback = std::function<int (const Glove* server, std::string ipAddress, std::string hostname, uint16_t remotePort, std::string data0, std::string data1, uint32_t data2, double data3)>;
+
+  /**
    * That's a client callback (what we run when a client connects our server
    * 
    * int clientCallback(Client &c);
@@ -1210,6 +1241,44 @@ public:
       /** Enable all flags  */
       SSL_FLAG_ALL             = 65535
     };
+
+  /**
+   * Connection Log State. Indicates whether the logged connection
+   * was accepted, denied and the reason of denegation
+   */
+  enum ConnectionLogState
+    {
+      CONNECTION_ACCEPTED,
+      ACCEPT_ERROR,
+      /* too many concurrent connections */
+      CONNECTION_DENIED_BY_TOO_MANY,
+      /* default policy is DENY ALL */
+      CONNECTION_DENIED_BY_POLICY,
+      /* connection denied by filter */
+      CONNECTION_DENIED_BY_FILTER,
+      /* unknowen cause. Don't know where to use it */
+      CONNECTION_DENIED_BY_OTHER
+    };
+
+  /**
+   * Stores basic information from the incoming connection.
+   * This information is collected before the worker callback
+   * is called, so it won't collect SSL negotiation data, or
+   * login, or so, just connection
+   */
+  struct ConnectionLog
+  {
+    /** IP Address  */
+    std::string ipAddress;
+    /** Hostname, if resolution is enabled  */
+    std::string hostName;
+    /** Start time  */
+    time_point start;
+    /** Connection state  */
+    ConnectionLogState state;
+    /** If connection was denied by filter, this is the filter ID  */
+    uint32_t filter; 
+  };
   /**
    * A server error callback. What we run when there is a problem with a client
    *
@@ -1465,6 +1534,64 @@ public:
   {
     return clients_connected;
   }
+  /**
+   * Debug Logged Connections. Extract a string with a list
+   * of logged connections with dates, IPs and states
+   */
+  std::string debugLoggedConnections();
+
+  /**
+   * Too Many Connections Response Message. This will be sent
+   * if someone tries to connect when the max_accepted_clients
+   * is reached.
+   * This will enable reject_connections
+   *
+   * @param msg Message to return
+   */
+  void tmcRejectMessage(std::string msg)
+  {
+    tmcRejectCb = [msg] (Client* c) { return msg; };
+  }
+
+  /**
+   * Too Many Connections Response Callback. This will be called
+   * if someone tries to connect when the max_accepted_clients
+   * is reached.
+   * This will enable reject_connections
+   *
+   * @param cb function to call. This function must return a string message
+   *           to be sent to the user.
+   */
+  void tmcRejectCallback(std::function <std::string (Client* c)> cb)
+  {
+    tmcRejectCb = cb;
+  }
+
+  /**
+   * Disables reject message for client connections when there are
+   * too many
+   */
+  void tmcRejectDisable()
+  {
+    tmcRejectCb = 0;
+  }
+
+  void addConnectionFilter(connection_filter_callback cb, std::string data0="", std::string data1="", uint32_t data2 =0, double data3 =0)
+  {
+    connection_filters.insert({connection_filters.size(), {cb, data0, data1, data2, data3}});
+  }
+
+  void deleteConnectionFilter(uint32_t filterId)
+  {
+    auto f = connection_filters.find(filterId);
+    if (f != connection_filters.end())
+      connection_filters.erase(f);
+  }
+
+  /* Hay que hacer métodos para aceptar y denegar rangos de IP */
+  /* Un filtro más para denegar una conexión si viene en menos de X tiempo, para
+   eso, el incoming log debe estar activado y se consultarán las últimas conexiones */
+  
 #if ENABLE_OPENSSL
   /**
    * Get SSL Verify state. But with some things more
@@ -1607,6 +1734,42 @@ public:
    */
   option_conf(server_options, bool, copy_options);
 
+  // declares bool incoming_log([bool])
+  /**
+   * Getter/Set incoming_log server option
+   *
+   * bool incoming_log(bool newVal);
+   * bool incoming_log();
+   */
+  option_conf(server_options, bool, incoming_log);
+
+  // declares bool reject_connections([bool])
+  /**
+   * Getter/Set reject_connections server option
+   *
+   * bool reject_connections(bool newVal);
+   * bool reject_connections();
+   */
+  option_conf(server_options, bool, reject_connections);
+
+  // declares bool wait_before_reject_connection([bool])
+  /**
+   * Getter/Set wait_before_reject_connection server option
+   *
+   * bool wait_before_reject_connection(bool newVal);
+   * bool wait_before_reject_connection();
+   */
+  option_conf(server_options, double, wait_before_reject_connection);
+
+  // declares bool default_conn_policy([bool])
+  /**
+   * Getter/Set default_conn_policy server option
+   *
+   * bool default_conn_policy(bool newVal);
+   * bool default_conn_policy();
+   */
+  option_conf(server_options, uint8_t, default_conn_policy);
+
 #if ENABLE_OPENSSL
   /**
    * Getter and setter for SSL Method
@@ -1656,6 +1819,13 @@ protected:
   void launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id);
   bool test_connected();
   void fill_connection_info(addrinfo* rp, int port);
+  /* logs connection in local log and rotates list */
+  void logConnection(std::string ipAddress, std::string hostName, ConnectionLogState state, uint32_t filterId=0);
+  unsigned getTotalConnectedClients()
+  {
+    return clients_connected.size();
+  }
+  void serverRejectConnection();
 #if ENABLE_OPENSSL
   /**
    * Initializes ssl_options with default values
@@ -1727,13 +1897,43 @@ protected:
     unsigned accept_wait;
     // copy default options to clients
     bool copy_options;
+    // incoming connection log. Defaults to true
+    bool incoming_log;
+    // reject incoming connections when clients connected are max_accepted_clients. Defaults false
+    bool reject_connections;
+    // max time to wait before rejecting the connection. Defaults 0
+    double wait_before_reject_connection;
+    // default connection policy ( 0 - deny, !=0 - accept ). Defaults 1
+    uint8_t default_conn_policy;
   } server_options;
 
+  /* We may use variant types but I won't use it anywhere else (now) */
+  struct ConnectionFilter
+  {
+    connection_filter_callback cb;
+    std::string data0;
+    std::string data1;
+    uint32_t data2;
+    double data3;
+  };
   server_error_callback_t _server_error_callback;
 
   // multiple clients
   bool accept_clients;
   std::map <unsigned, Client*> clients_connected;
+  // this vector stores information about connection times
+  std::list<ConnectionLog> connections_logged;
+  unsigned maxConnectionsBuffer;
+  /* this map includes filters for incoming connections:
+  * client restrictions
+  * ip restrictions
+  * time restrictions
+  * and user defined function for future restrictions */
+  std::map <unsigned, ConnectionFilter> connection_filters;
+  /**
+   * Too many connections reject callback
+   */
+  std::function <std::string (Client* c)> tmcRejectCb;
   std::mutex clients_connected_mutex;
   unsigned clientId;
 };

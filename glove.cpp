@@ -16,6 +16,12 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog:
+*  20160128 : - Incoming connection log 
+*             - Incoming connection reject message and callback
+*             - Connection filters and policies are not ready. 
+*               DON'T USE THIS VERSION
+*  20160127 : - Deleting closed connections from memory
+*  20160126 : - MatchIP matches IP ranges by CIDR (x.x.x.x/y) or by wildcard (x.x.*.*) with option Not Only CIDR
 *  20151216 : - Clean SSL context and structure when disconnect()
 *  20151212 : - URI struct now know if it's a secure or a non-secure service.
 *             - Bug fixed: Segfault when server has port open but isn't accepting connections
@@ -45,11 +51,13 @@
 *  20140807 : Begin this project
 *
 * To-do:
+*  1 - Match IP for IPv6
 *  1 - SSL shutdown. Context and handler cleanup !!!
 *  2 - epoll support
 *  6 - be able to connect with protocol/service names
 *  7 - set_option(...) allowing a variadic template to set every client or server option
 *  8 - allowed client list (IPs list with allowed clients)
+*  8 - create GloveHTTP behind GloveHTTPServer and GloveHTTPClient
 *  9 - logger callback
 * 10 - test_connected fussion with is_connected()
 * 15 - Winsock support (far far in the future)
@@ -161,6 +169,12 @@
  *      Found on Glove::SSLServerInitialize() when trying to load the certificate key file
  *  36: "Private key doesn't match the certificate"
  *      Found on Glove::SSLServerInitialize() when certificate and key are loaded
+ *  37: "Given IP Address is not valid"
+ *      Found on GloveBase::inet_pton4() when doing inet_pton() and it results 0
+ *  38: "Wrong family specified"
+ *      Found on GloveBase::inet_pton4() when doing inet_pton() and it results <0
+ *  39: "Wrong CIDR input"
+ *      Found on GloveBase::getNetworkAndMask() when validating CIDR expression
  */
 
 #include "glove.hpp"
@@ -174,6 +188,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <bitset>
 
 /** Initialization (if any), it was intended to be cross-platform, but time
  goes by and I needed to get this lib in a decent point for Linux. So I didn't
@@ -227,6 +242,7 @@ enum
     TCP_TIMEOUT = -2
   };
 
+  /* Some bundled functions to make life easier */
   static timeval as_timeval ( double seconds )
   {
     timeval tv;
@@ -240,12 +256,37 @@ enum
     int i = 10;
     for(; val && i ; --i, val /= 10)
       {
-  	buf[i] = "0123456789"[val % 10];
+		  buf[i] = "0123456789"[val % 10];
       }
 
     return &buf[i+1];
   }
+
+  template <typename delimiters_t>
+  std::vector< std::string > split(const std::string & str, const delimiters_t & sep, uint32_t maxsplit = 0)
+  {
+    std::vector< std::string > result;
+
+    // Skip delimiters at beginning.
+    std::string::size_type lastPos = str.find_first_not_of(sep, 0);
+    // Find first "non-delimiter".
+    std::string::size_type pos     = str.find_first_of(sep, lastPos);
+
+    while (std::string::npos != pos || std::string::npos != lastPos)
+      {
+        // Found a token, add it to the vector.
+        result.push_back(str.substr(lastPos, pos - lastPos));
+        // Skip delimiters.  Note the "not_of"
+        lastPos = str.find_first_not_of(sep, pos);
+        // Find next "non-delimiter"
+        pos = str.find_first_of(sep, lastPos);
+      }
+
+      return result;
+  }
+
 #if ENABLE_OPENSSL
+
   /**
    * Extract a substring from origin into buffer, updating starting
    * value to call in chain. Used by ASN1_TIME_to_time_t to extract
@@ -347,6 +388,38 @@ enum
 #endif
 };
 
+/* Support for older versions of GCC */
+#if defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__ <= 50200 )
+  namespace std
+  {
+    static std::string put_time( const std::tm* tmb, const char* fmt )
+    {
+      std::string s( 128, '\0' );
+      size_t written;
+      while( !(written=strftime( &s[0], s.size(), fmt, tmb ) ) )
+        s.resize( s.size() + 128 );
+      s[written] = '\0';
+
+      return s.c_str();
+    }
+  }
+
+  /**
+   * Writes formatted time on string
+   *
+   */
+  std::string timeformat(const std::chrono::system_clock::time_point& moment, const std::string &format)
+  {
+    std::tm tm;
+    const time_t tim = std::chrono::system_clock::to_time_t(moment);
+    localtime_r(&tim, &tm);
+
+    return std::put_time(&tm, format.c_str());
+  }
+
+#endif
+
+
 void GloveBase::setsockopt(int level, int optname, void *optval, socklen_t optlen)
 {
   if (SETSOCKOPT(conn.sockfd, level, optname, optval, optlen) < 0)
@@ -384,6 +457,114 @@ void GloveBase::getsockopt(int optname, int &val)
   int level = get_integer_sockopts_level(optname);
 
   getsockopt(level, optname, &val, &val_len);
+}
+
+int GloveBase::matchIp(const uint32_t address, const uint32_t network, const uint8_t bits=24)
+{
+  /* Some inspiration for IPv6:
+     https://github.com/symfony/http-foundation/blob/652e8af9d22c16c5b6556048136021db0b8c6640/IpUtils.php
+     http://stackoverflow.com/questions/7213995/ip-cidr-match-function
+
+  */
+  // from addr4_match() method: http://fxr.watson.org/fxr/source/include/net/xfrm.h?v=linux-2.6#L840
+  if (bits == 0)
+    return true;
+
+  return !((address ^network) & htonl(0xFFFFFFFFu << (32 - bits)));
+}
+
+int GloveBase::matchIp(const std::string address, const std::string cidr, bool notOnlyCIDR, bool noException)
+{
+  in_addr ipAddress;
+  int pton_res;
+
+  pton_res = inet_pton4(address, &ipAddress, noException);
+  if (pton_res<=0)
+    return -1;
+  /* Only IP4 at this moment */
+  auto baseIpAndMask = GloveBase::getNetworkAndMask(cidr, notOnlyCIDR, noException);
+
+  return !((ipAddress.s_addr ^ baseIpAndMask.first) & baseIpAndMask.second);
+}
+
+int GloveBase::inet_pton4(const std::string addr, in_addr* result, bool noException)
+{
+  int pton_res = inet_pton(AF_INET, addr.c_str(), result);
+  if (!noException)			/* If we want exceptions*/
+    {
+      if (pton_res == 0)
+	{
+	  throw GloveException(37, "Given IP Address is not valid");
+	}
+      else if (pton_res<0)
+	{
+	  throw GloveException(38, "Wrong family specified.");
+	}
+    }
+  return pton_res;
+}
+
+std::pair<uint32_t, uint32_t> GloveBase::getNetworkAndMask(const std::string cidr, bool notOnlyCIDR, bool noException)
+{
+  uint32_t mask = 0xFFFFFFFFu, finalAddress;
+  auto slash = cidr.find('/');
+
+  if (slash != std::string::npos)
+    {
+      /* Have slash ! */
+      auto addressStr = cidr.substr(0, slash);
+      auto bitsQty = std::stoi(cidr.substr(slash+1));
+      if ( (bitsQty<0) || (bitsQty>32) )
+	{
+	  if (noException)
+	    return std::pair<uint32_t, uint32_t>(0, 0);
+	  else
+	    throw GloveException(39, "Wrong CIDR input");
+	}
+      mask = mask << (32 - bitsQty);
+      in_addr tempNw;
+
+      /* Return only if noException */
+      if (inet_pton4(addressStr, &tempNw, noException)<=0)
+	return std::pair<uint32_t, uint32_t>(0, 0);
+
+      finalAddress = tempNw.s_addr;
+    }
+  else if (notOnlyCIDR)
+    {
+      auto ipNumbers = split(cidr, ".");
+      if (ipNumbers.size()!=4)
+	throw GloveException(39, "Wrong CIDR input");
+      uint32_t mult=1;
+      finalAddress=0;
+      mask=~0;
+      for (auto n=ipNumbers.rbegin(); n!= ipNumbers.rend(); ++n)
+	{
+	  if (*n=="*")
+	    {
+	      mask-=0xff*mult;
+	    }
+	  else
+	    {
+	      finalAddress+= std::stoi(*n)*mult;
+	    }
+	  mult*=256;
+	}
+      finalAddress = htonl(finalAddress);
+      /* Don't have a slash */
+    }
+  else
+    {
+      in_addr tempNw;
+
+      if (inet_pton4(cidr, &tempNw, noException)<=0)
+	return std::pair<uint32_t, uint32_t>(0, 0);
+
+      finalAddress=tempNw.s_addr;
+      mask=(uint32_t)~0;
+      /* Only CIDR or simple IP */
+    }
+  return std::pair<uint32_t, uint32_t>(finalAddress, htonl(mask));
 }
 
 void GloveBase::register_dtm()
@@ -943,9 +1124,10 @@ std::string GloveBase::base64_decode(std::string const& encoded_string)
 }
 
 // Glove::Glove(): connected(false), _shutdown_on_destroy(false), _resolve_hostnames(false), thread_clients(true), thread_server(true), server_reuseaddr(true), max_accepted_clients(2), _server_error_callback(NULL), accept_clients(false), clientId(0)
-Glove::Glove(): connected(false), _shutdown_on_destroy(false), server_options({false, true, true, true, GLOVE_DEFAULT_MAX_CLIENTS, GLOVE_DEFAULT_ACCEPT_WAIT, true}), _server_error_callback(NULL), accept_clients(false), clientId(0)
+Glove::Glove(): connected(false), _shutdown_on_destroy(false), server_options({false, true, true, true, GLOVE_DEFAULT_MAX_CLIENTS, GLOVE_DEFAULT_ACCEPT_WAIT, true, true, false, 0, 1}), _server_error_callback(NULL), accept_clients(false), clientId(0)
 {
   default_values.buffer_size=GLOVE_DEFAULT_BUFFER_SIZE;
+  maxConnectionsBuffer = GLOVE_DEFAULT_MAX_CONNECTIONS_BUFFER;
 #if ENABLE_OPENSSL
   setSSLDefaultValues();
 #endif
@@ -1613,21 +1795,88 @@ void Glove::listen(const int port, client_callback cb, std::string bind_ip, cons
     }
 }
 
+void Glove::serverRejectConnection()
+{
+  Conn_description client_conn;
+  sockaddr_in client;
+  socklen_t client_len = sizeof(client);
+  std::string ipaddress;
+
+  memset(&client, 0, client_len);
+
+  client_conn.sockfd = ACCEPT (conn.sockfd, (struct sockaddr *)&client, &client_len);
+  if (client_conn.sockfd<0)
+    {
+      logConnection("", "", ACCEPT_ERROR);
+      // Error!! But not big enough to throw an exception
+      return;
+    }
+  char _ipaddress[INET_ADDRSTRLEN];
+
+  if ( inet_ntop(AF_INET,  &(client.sin_addr), _ipaddress, INET_ADDRSTRLEN) != NULL)
+    ipaddress=_ipaddress;
+  logConnection(ipaddress, "", CONNECTION_DENIED_BY_TOO_MANY);
+
+  /* If we have a tmcRejectCb, create a Client to send the message */
+  if (tmcRejectCb)
+    {
+      Client *c;
+      c = (server_options.copy_options)?new Client(client_conn, ipaddress, "", default_values):new Client(client_conn, ipaddress, "");
+      c->send(tmcRejectCb(c));
+      delete c;
+    }
+  /* Close connection */
+  close(client_conn.sockfd);
+
+}
+
 void Glove::create_worker(Glove::client_callback cb)
 {
   sockaddr_in client;
   socklen_t client_len = sizeof(client);
   memset(&client, 0, client_len);
 
-  if (clients_connected.size()>=server_options.max_accepted_clients)
+  if (getTotalConnectedClients()>=server_options.max_accepted_clients)
     {
-      std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
-      return;
+      int selectResult = select(1, SELECT_READ);
+      if (selectResult==TCP_OK)
+	{
+	  /* Detect if there is an incomming connection here,
+	     if so. Accept it and close it inmediately to 
+	     deny access if it's configured to do so. */
+	  if (server_options.reject_connections)
+	    {
+	      double totalTime=0;
+	      while ( (totalTime<server_options.wait_before_reject_connection) && (getTotalConnectedClients()>=server_options.max_accepted_clients) )
+		{
+		  totalTime+=0.1;
+		  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+	      if (getTotalConnectedClients()>=server_options.max_accepted_clients)
+		{
+		  /* If after waiting we still have a lot of connections, reject connection */
+		  serverRejectConnection();
+		  return;
+		}
+	    }
+	  else
+	    {
+	      /* Sleep a little bit to prevent high CPU load. Just wait for client to timeout */
+	      std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
+	      return;
+	    }
+	}
+      else
+	{
+	  std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
+	  return;
+	}
     }
   Conn_description client_conn;
   client_conn.sockfd = ACCEPT (conn.sockfd, (struct sockaddr *)&client, &client_len);
   if (client_conn.sockfd<0)
     {
+      logConnection("", "", ACCEPT_ERROR);
       // Error!! But not big enough to throw an exception
       return;
     }
@@ -1643,10 +1892,34 @@ void Glove::create_worker(Glove::client_callback cb)
     }
 
   char _ipaddress[INET_ADDRSTRLEN];
-  // SACAR LA FAMILY DEL client, y poner tambien arriba cuando calculamos la ip
+
   if ( inet_ntop(AF_INET,  &(client.sin_addr), _ipaddress, INET_ADDRSTRLEN) != NULL)
     ipaddress=_ipaddress;
 
+  uint8_t accepted=server_options.default_conn_policy;
+  bool logged = false;
+  for (auto f : connection_filters)
+    {
+      auto fi = f.second;
+      auto res = fi.cb(this, ipaddress, hostname, client.sin_port, fi.data0, fi.data1, fi.data2, fi.data3);
+      if (res<0)
+	{
+	  accepted = 0;
+	  logged = true;
+	  logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_FILTER, f.first);
+	}
+      else if (res>0)
+	accepted = 1;
+      /* Nothing to do if res == 0 */
+    }
+  if (accepted==0)
+    {
+      close(client_conn.sockfd);
+      if (!logged)
+	logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_POLICY);
+      /* Connection not accepted by filters */
+    }
+  logConnection(ipaddress, hostname, CONNECTION_ACCEPTED);
   Client *c;
   if (server_options.copy_options)
     c = new Client(client_conn, ipaddress, hostname, default_values);
@@ -1690,6 +1963,51 @@ void Glove::launch_client(client_callback cb, Client *c, Conn_description client
   clients_connected_mutex.lock();
   clients_connected.erase( clients_connected.find(client_id) );
   clients_connected_mutex.unlock();
+  delete c;
+}
+
+std::string Glove::debugLoggedConnections()
+{
+  std::string out ="";
+  for (auto c : connections_logged)
+    {
+      out+="["+timeformat(c.start, "%d/%m/%Y %H:%M:%S")+"] "+c.ipAddress+" ("+c.hostName+") Status: ";
+      switch (c.state)
+	{
+	case CONNECTION_ACCEPTED: 
+	  out+="Accepted";
+	  break;
+	case ACCEPT_ERROR:
+	  out+="Error accepting";
+	  break;
+	case CONNECTION_DENIED_BY_POLICY:
+	  out+="Denied by Policy.";
+	  break;
+	case CONNECTION_DENIED_BY_TOO_MANY:
+	  out+="Denied by too many connections";
+	  break;
+	case CONNECTION_DENIED_BY_FILTER:
+	  out+="Denied by Filter: "+std::to_string(c.filter);
+	  break;
+	case CONNECTION_DENIED_BY_OTHER:
+	  out+="Denied by Other.";
+	  break;
+	default:
+	  out+="Unknown status";
+	}
+      out+="\n";
+    }
+  return "";
+}
+
+void Glove::logConnection(std::string ipAddress, std::string hostName, Glove::ConnectionLogState state, uint32_t filterId)
+{
+  if (!server_options.incoming_log)
+    return;
+
+  connections_logged.push_back ({ipAddress, hostName, std::chrono::system_clock::now(), state, filterId });
+  if (connections_logged.size()>maxConnectionsBuffer)
+    connections_logged.pop_front();
 }
 
 void GloveBase::get_address(std::string &ip, int &port, bool noexcp)
