@@ -32,7 +32,7 @@
 #include <ctime>
 #include <chrono>
 #include <map>
-#include <list>
+#include <deque>
 #include <sstream>
 #include <iostream>		// debug only
 #include <algorithm>
@@ -477,6 +477,7 @@ public:
     default_values.exceptions&=~exceptions;
   }
 
+  static int select(int fd, const double timeout, int test);
   // socket handling
   /**
    * Performs a select() operation on the opened socket used
@@ -1264,7 +1265,7 @@ public:
    * Stores basic information from the incoming connection.
    * This information is collected before the worker callback
    * is called, so it won't collect SSL negotiation data, or
-   * login, or so, just connection
+   * login, or so, just connection.
    */
   struct ConnectionLog
   {
@@ -1534,11 +1535,31 @@ public:
   {
     return clients_connected;
   }
+
   /**
    * Debug Logged Connections. Extract a string with a list
    * of logged connections with dates, IPs and states
    */
   std::string debugLoggedConnections();
+
+  uint32_t countLoggedConnections()
+  {
+    return connections_logged.size();
+  }
+
+  /* TO DOC */
+  bool getLoggedConnection(ConnectionLog& cl, uint32_t id)
+  {
+    try 
+      {
+	cl = connections_logged.at(id);
+	return true;
+      }
+    catch (const std::out_of_range& oor) 
+      {
+	return false;
+      }
+  }
 
   /**
    * Too Many Connections Response Message. This will be sent
@@ -1548,10 +1569,7 @@ public:
    *
    * @param msg Message to return
    */
-  void tmcRejectMessage(std::string msg)
-  {
-    tmcRejectCb = [msg] (Client* c) { return msg; };
-  }
+  void tmcRejectMessage(std::string msg);
 
   /**
    * Too Many Connections Response Callback. This will be called
@@ -1562,31 +1580,22 @@ public:
    * @param cb function to call. This function must return a string message
    *           to be sent to the user.
    */
-  void tmcRejectCallback(std::function <std::string (Client* c)> cb)
-  {
-    tmcRejectCb = cb;
-  }
+  void tmcRejectCallback(std::function <std::string (Client* c)> cb);
 
   /**
    * Disables reject message for client connections when there are
    * too many
    */
-  void tmcRejectDisable()
-  {
-    tmcRejectCb = 0;
-  }
+  void tmcRejectDisable();
 
-  void addConnectionFilter(connection_filter_callback cb, std::string data0="", std::string data1="", uint32_t data2 =0, double data3 =0)
-  {
-    connection_filters.insert({connection_filters.size(), {cb, data0, data1, data2, data3}});
-  }
+  void addConnectionFilter(connection_filter_callback cb, std::string data0="", std::string data1="", uint32_t data2 =0, double data3 =0);
 
-  void deleteConnectionFilter(uint32_t filterId)
-  {
-    auto f = connection_filters.find(filterId);
-    if (f != connection_filters.end())
-      connection_filters.erase(f);
-  }
+  void deleteConnectionFilter(uint32_t filterId);
+
+  void serverAllowIp(std::string cidr);
+  void serverDisallowIp(std::string cidr);
+
+  void serverDisallowFastConnection(double time, uint32_t connections);
 
   /* Hay que hacer métodos para aceptar y denegar rangos de IP */
   /* Un filtro más para denegar una conexión si viene en menos de X tiempo, para
@@ -1761,7 +1770,7 @@ public:
    */
   option_conf(server_options, double, wait_before_reject_connection);
 
-  // declares bool default_conn_policy([bool])
+  // declares uint8_t default_conn_policy([bool])
   /**
    * Getter/Set default_conn_policy server option
    *
@@ -1922,7 +1931,7 @@ protected:
   bool accept_clients;
   std::map <unsigned, Client*> clients_connected;
   // this vector stores information about connection times
-  std::list<ConnectionLog> connections_logged;
+  std::deque<ConnectionLog> connections_logged;
   unsigned maxConnectionsBuffer;
   /* this map includes filters for incoming connections:
   * client restrictions

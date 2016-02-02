@@ -16,6 +16,9 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog:
+*  20160201 : - select() is now static function too and can handle just one fd, but you can specify.
+*             - receive_fixed don't run input filters on timeout anymore when read_once is enabled
+*  20160129 : - Allowing or denying connection filters
 *  20160128 : - Incoming connection log 
 *             - Incoming connection reject message and callback
 *             - Connection filters and policies are not ready. 
@@ -285,6 +288,17 @@ enum
       return result;
   }
 
+  int _serverFilterMatchIp (const Glove* server, std::string ipAddress, std::string hostname, uint16_t remotePort, std::string data0, std::string data1, uint32_t data2, double data3)
+  {
+    /* data0 stores the CIDR or mask */
+    /* data2 is 0 to deny CIDR, any othre value is to accept */
+    if (GloveBase::matchIp(ipAddress, data0))
+      return (data2)?1:-1;
+    else
+      return 0;
+  }
+
+
 #if ENABLE_OPENSSL
 
   /**
@@ -404,6 +418,8 @@ enum
     }
   }
 
+namespace
+{
   /**
    * Writes formatted time on string
    *
@@ -416,7 +432,7 @@ enum
 
     return std::put_time(&tm, format.c_str());
   }
-
+};
 #endif
 
 
@@ -577,12 +593,12 @@ std::string GloveBase::append_errno(std::string message)
   return message +std::string(strerror(errno));
 }
 
-int GloveBase::select(const double timeout, int test)
+int GloveBase::select(int fd, const double timeout, int test)
 {
     // set up the file descriptor set
     fd_set fds;
     FD_ZERO(&fds);
-    FD_SET(conn.sockfd, &fds);
+    FD_SET(fd, &fds);
     fd_set *rset=NULL, *wset=NULL;
 
     // set up the struct timeval for the timeout
@@ -598,9 +614,36 @@ int GloveBase::select(const double timeout, int test)
     // if  tv = {n,m}, then select() waits up to n.m seconds
     // if  tv = {0,0}, then select() does polling
     // if &tv =  NULL, then select() waits forever
-    int ret = SELECT(conn.sockfd+1, rset, wset, NULL, &tv);
+    int ret = SELECT(fd+1, rset, wset, NULL, &tv);
 
-    return ( ret == -1 ? conn.sockfd = -1, TCP_ERROR : ret == 0 ? TCP_TIMEOUT : TCP_OK );
+    return ( ret == -1 ? fd = -1, TCP_ERROR : ret == 0 ? TCP_TIMEOUT : TCP_OK );
+}
+
+int GloveBase::select(const double timeout, int test)
+{
+  return GloveBase::select(conn.sockfd, timeout, test);
+    /* // set up the file descriptor set */
+    /* fd_set fds; */
+    /* FD_ZERO(&fds); */
+    /* FD_SET(conn.sockfd, &fds); */
+    /* fd_set *rset=NULL, *wset=NULL; */
+
+    /* // set up the struct timeval for the timeout */
+    /* timeval tv = as_timeval( timeout ); */
+
+    /* if (test & SELECT_READ) */
+    /*   rset=&fds; */
+
+    /* if (test & SELECT_WRITE) */
+    /*   wset=&fds; */
+
+    /* // wait until timeout or data received */
+    /* // if  tv = {n,m}, then select() waits up to n.m seconds */
+    /* // if  tv = {0,0}, then select() does polling */
+    /* // if &tv =  NULL, then select() waits forever */
+    /* int ret = SELECT(conn.sockfd+1, rset, wset, NULL, &tv); */
+
+    /* return ( ret == -1 ? conn.sockfd = -1, TCP_ERROR : ret == 0 ? TCP_TIMEOUT : TCP_OK ); */
 }
 
 void GloveBase::_send(const std::string &data)
@@ -653,7 +696,13 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 	  if (error == TCP_TIMEOUT)
 	    {
 	      if ( (!exception_on_timeout) || ( (in.length()>0) && (!timeout_when_data) && (size==0) ) )
-		break;	// Sometimes we don't want to return an exception here.
+		{
+		  if (_read_once) /* If we return directly we won't apply filters on timeout */
+		    return "";
+		  else
+		    break;
+		}
+	      //		break;	// Sometimes we don't want to return an exception here.
 	      // But, we must have low timeout.
 	      // Not when fixed
 	      else
@@ -1918,6 +1967,7 @@ void Glove::create_worker(Glove::client_callback cb)
       if (!logged)
 	logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_POLICY);
       /* Connection not accepted by filters */
+      return; 
     }
   logConnection(ipaddress, hostname, CONNECTION_ACCEPTED);
   Client *c;
@@ -2008,6 +2058,66 @@ void Glove::logConnection(std::string ipAddress, std::string hostName, Glove::Co
   connections_logged.push_back ({ipAddress, hostName, std::chrono::system_clock::now(), state, filterId });
   if (connections_logged.size()>maxConnectionsBuffer)
     connections_logged.pop_front();
+}
+
+void Glove::tmcRejectMessage(std::string msg)
+{
+  tmcRejectCb = [msg] (Client* c) { return msg; };
+}
+
+void Glove::tmcRejectCallback(std::function <std::string (Client* c)> cb)
+{
+  tmcRejectCb = cb;
+}
+
+void Glove::tmcRejectDisable()
+{
+  tmcRejectCb = 0;
+}
+
+void Glove::addConnectionFilter(Glove::connection_filter_callback cb, std::string data0, std::string data1, uint32_t data2, double data3)
+{
+  connection_filters.insert({connection_filters.size(), {cb, data0, data1, data2, data3}});
+}
+
+void Glove::deleteConnectionFilter(uint32_t filterId)
+{
+  auto f = connection_filters.find(filterId);
+  if (f != connection_filters.end())
+    connection_filters.erase(f);
+}
+
+void Glove::serverAllowIp(std::string cidr)
+{
+  addConnectionFilter(_serverFilterMatchIp, cidr, "", 1);
+}
+
+void Glove::serverDisallowIp(std::string cidr)
+{
+  addConnectionFilter(_serverFilterMatchIp, cidr, "", 0);
+}
+
+void Glove::serverDisallowFastConnection(double time, uint32_t connections)
+{
+  addConnectionFilter([&] (const Glove* server, std::string ipaddress, std::string hostname, uint16_t port, std::string d0, std::string d1, uint32_t d2, double d3)
+		      {
+			/* time is d3 
+			   connections is d2 */
+
+			/* If there aren't enough logged connections, the filter
+			   won't apply. */
+			uint32_t entries = ((Glove*)server)->countLoggedConnections();
+			if (entries<d2)
+			  return 0;
+
+			Glove::ConnectionLog cl;
+			if (!getLoggedConnection(cl, entries-d2))
+			  return 0; /* Error getting, but not a hard fail. */
+
+			double timeBetweenConns = std::chrono::duration_cast<std::chrono::duration<double,std::ratio<1>>>(std::chrono::system_clock::now()-cl.start).count();
+			std::cout << "time between last "<<d2<<" connections: "<<timeBetweenConns<<std::endl;
+			return (timeBetweenConns<d3)?-1:0;
+		      }, "", "", connections, time);
 }
 
 void GloveBase::get_address(std::string &ip, int &port, bool noexcp)
