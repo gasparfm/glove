@@ -346,8 +346,11 @@ class GloveHttpServer
   static const std::vector<std::string> StandardMethods;
 
   /* Server configuration */
+  GloveHttpServer();
   GloveHttpServer(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT);
   virtual ~GloveHttpServer();
+
+  void listen(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT);
   std::string defaultContentType(std::string dct="");
 
   std::string serverSignature(std::string newSig);
@@ -491,7 +494,13 @@ class GloveHttpServer
   static std::string _unknownMimeType;
   Httpmetrics metrics;
 
+  bool listening;
+  void baseInitialization();
   void initializeMetrics();
+  bool hasServer()
+  {
+    return (server!=NULL);
+  }
   bool findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
   int clientConnection(Glove::Client &client);
   int _receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout=0);

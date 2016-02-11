@@ -14,6 +14,7 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20160116 : Base constructor
 *  20151009 : Bug fixing, max_clients and timeout added to the constructor
 *             GloveHttpServer. You also have getters and setters for that.
 *  20151009 : Added keep-alive support, with configurable keepalive_timeout
@@ -36,7 +37,6 @@
 *   - Max. size of strings
 *   - Size test of strings
 *   - Be able to process FastCGI requests to use with Apache/NGinx and more
-*   - Keepalive
 *   - Compression
 *   - Cache managing
 *
@@ -791,18 +791,31 @@ GloveHttpServer::VirtualHost* GloveHttpServer::getVHost(std::string name)
   return NULL;
 }
 
-GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout):port(listenPort)
+void GloveHttpServer::baseInitialization()
 {
-  namespace ph = std::placeholders;
-
+  listening=false;
   _serverSignature = "Glove Http Server/" GHS_VERSION_STR " at {:serverHost} Port {:serverPort}";
   _simpleSignature = "Glove Http Server/" GHS_VERSION_STR;
   _defaultContentType = "text/html; charset=UTF-8";
 
+  if (addVhost("%") != GloveHttpErrors::ALL_OK)
+    return;			/* Exception here? */
+
+  initializeMetrics();
+}
+
+GloveHttpServer::GloveHttpServer()
+{
+  baseInitialization();
+}
+
+void GloveHttpServer::listen(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout)
+{
+  port = listenPort;
+  namespace ph = std::placeholders;
+
   ghoptions.keepalive_timeout = keepalive_timeout;
 
-  if (addVhost("%") != GloveHttpErrors::ALL_OK)
-    return;
 
   // addResponseProcessor(GloveHttpResponse::NOT_FOUND, GloveHttpServer::response404Processor);
   // // Errors 5XX
@@ -813,8 +826,6 @@ GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size
   // addAutoResponse(RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
   // messages = _defaultMessages;
 
-  initializeMetrics();
-
   server = new Glove(listenPort, 
   		     std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
   		     bind_ip,
@@ -824,6 +835,12 @@ GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size
   		     domain);
   server->max_accepted_clients(max_accepted_clients);
   server->timeout(timeout);
+}
+
+GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout)
+{
+  baseInitialization();
+  listen(listenPort, bind_ip, buffer_size, backlog_queue, domain, max_accepted_clients, timeout, keepalive_timeout);
 }
 
 GloveHttpServer::~GloveHttpServer()
