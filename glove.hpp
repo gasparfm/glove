@@ -885,7 +885,9 @@ public:
   }
   // service separator : "://"
   // 
-  static uri get_from_uri (const std::string &uristring, bool resolve=true, std::string service_separator="");
+  static uri get_from_uri (const std::string &uristring, bool urldecode=true, bool resolve=true, std::string service_separator="");
+  /* extract uri arguments */
+  static std::map<std::string, std::string> extract_uri_arguments(std::string& rawArguments, std::string& fragment, bool urldecode=true);
 
   // some more tools
 
@@ -1502,6 +1504,10 @@ public:
    */
   bool is_connected();
 
+  unsigned totalHits()
+  {
+    return clientId;
+  }
   // options getters/setters
   /**
    * Setter for shutdown_on_destroy_option
@@ -1545,6 +1551,11 @@ public:
   uint32_t countLoggedConnections()
   {
     return connections_logged.size();
+  }
+
+  std::deque<ConnectionLog> getLoggedConnections()
+  {
+    return connections_logged;
   }
 
   /* TO DOC */

@@ -83,6 +83,9 @@ class GloveHttpRequest
   std::string getLocation() const;
   std::string getRawLocation() const;
   std::string getData() const;
+  std::string getData(std::string el) const;
+  std::string getContentType() const;
+  std::string getEncoding() const;
   std::map<std::string, std::string> getHeaders() const;
   std::string getHeader(std::string h) const;
   std::string getVhost();
@@ -102,11 +105,14 @@ class GloveHttpRequest
   Glove::Client *c;
   GloveBase::uri uri;
   int error;
+  std::string contentType;	/* Only if Content-Type is present */
+  std::string encoding;		/* Only if Content-Type is present */
   std::string method;
   std::string raw_location, location;
   std::string data;
   std::map<std::string, std::string> headers;
-
+  std::map<std::string, std::string> urlencoded_data;
+  void parseContentType(const std::string& method);
   std::string getAuthData();
 };
 
@@ -130,6 +136,8 @@ class GloveHttpResponse
   void send(GloveHttpRequest &request, Glove::Client &client);
   short file(std::string filename, bool addheaders=true, std::string contentType="");
   short code(short rc=0);
+  std::string contentType(std::string newContentType);
+  std::string contentType();
 
   static std::string responseMessage(short responseCode);
   inline std::string responseMessage()
@@ -225,6 +233,17 @@ class GloveHttpResponse
     return "";
   }
 
+  /* Disable response processors. Useful when we have errors directly and don't want to run glovehttpserver methods to generate responses */
+  inline bool disableProcessor()
+  {
+    return _disableProcessor;
+  }
+
+  inline void disableProcessor(bool disable)
+  {
+    _disableProcessor = disable;
+  }
+
   /* Response codes! */
 
   /* 1XX */
@@ -302,6 +321,7 @@ class GloveHttpResponse
   /* Response templates */
   static const std::string defaultResponseTemplate;
  private:
+  bool _disableProcessor=false;
   std::stringstream output;
   short _responseCode;
   std::string _contentType;
@@ -323,7 +343,7 @@ using _url_callback = std::function<void(GloveHttpRequest&, GloveHttpResponse&)>
 class GloveHttpUri
 {
  public:
-  GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, std::vector<std::string> methods);
+  GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, std::vector<std::string> methods, bool partialMatch);
   ~GloveHttpUri();
 
   bool match(std::string method, GloveBase::uri uri, std::map<std::string, std::string> &special);
@@ -336,6 +356,7 @@ class GloveHttpUri
   std::vector<std::string> arguments;
   std::vector<std::string> allowedMethods;
   _url_callback callback;
+  bool partialMatch;
 };
 
 /** Glove HTTP Server  */
@@ -369,7 +390,7 @@ class GloveHttpServer
   std::string autoResponses(std::string vhost, short responseId);
   void addAutoResponse(std::string vhost, short id, std::string response);
 
-  void addRoute(std::string route, url_callback callback, std::string vhost=defaultVhostName, int maxArgs=-1, std::vector<std::string> allowedMethods = StandardMethods);
+  void addRoute(std::string route, url_callback callback, std::string vhost=defaultVhostName, int maxArgs=-1, std::vector<std::string> allowedMethods = StandardMethods, bool partialMatch=false);
   /* Note, it will add it on any errorCode, right or wrong.
    Use with caution */
   void addResponseProcessor(short errorCode, url_callback callback);
@@ -380,7 +401,31 @@ class GloveHttpServer
   /* Information */
   unsigned version();
   std::string versionString();
+  static std::string getDefaultVhostName()
+    {
+      return defaultVhostName;
+    }
   /* get stats */
+  /* Gets number of connections */
+  unsigned connectionHits()
+  {
+    return server->totalHits();
+  }
+
+  std::map <unsigned, Glove::Client*> get_connected_clients()
+  {
+    return server->get_connected_clients();
+  }
+
+  uint32_t countLoggedConnections()
+  {
+    return server->countLoggedConnections();
+  }
+
+  std::deque<Glove::ConnectionLog> getLoggedConnections()
+  {
+    return server->getLoggedConnections();
+  }
 
   static std::string unknownMimeType(std::string nmt ="");
   static void addMimeType(std::string extension, std::string mimeType);

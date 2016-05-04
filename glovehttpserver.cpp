@@ -14,6 +14,9 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20160421 : some server info extracted
+*  20160420 : application/x-www-form-urlencoded arguments parse
+*  20160418 : Response processors can be disabled
 *  20160116 : Base constructor
 *  20151009 : Bug fixing, max_clients and timeout added to the constructor
 *             GloveHttpServer. You also have getters and setters for that.
@@ -281,13 +284,15 @@ std::string GloveHttpServer::_unknownMimeType = "application/octet-stream";
 std::map<std::string, std::string> GloveHttpServer::_mimeTypes = {
   /* page parts */
   {"html", "text/html"},
+  {"json", "application/json"},
   {"php", "text/html"},
   {"css", "text/css"},
   {"js", "text/javascript"},
   {"woff", "application/font-woff"},
   /* Images */
   {"jpg", "image/jpeg"}, 
-  {"png", "image/png"}
+  {"png", "image/png"},
+  {"gif", "image/gif"}
 };
 
 const std::map<short, std::string> GloveHttpServer::_defaultMessages = {
@@ -432,7 +437,7 @@ namespace
 GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort):
   srv(server), c(c), error(error), raw_location(raw_location), method(method), data(data), headers(httpheaders)
 {
-  location = Glove::urldecode(raw_location);
+  /* location = Glove::urldecode(raw_location); */
   // More services soon !!
   std::string service = "http://";
 
@@ -441,7 +446,10 @@ GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, in
     thishost = c->get_address(true)+":"+std::to_string(serverPort);
 
   std::string auth = getAuthData();
-  uri = GloveBase::get_from_uri(service+((auth.empty())?"":auth+"@")+thishost+location);
+  uri = GloveBase::get_from_uri(service+((auth.empty())?"":auth+"@")+thishost+raw_location);
+  parseContentType(method);
+
+  location = uri.rawpath;
   // uri = GloveBase::get_from_uri
 }
 
@@ -474,6 +482,28 @@ std::string GloveHttpRequest::getRawLocation() const
   return raw_location;
 }
 
+std::string GloveHttpRequest::getContentType() const
+{
+  return contentType;
+}
+
+std::string GloveHttpRequest::getEncoding() const
+{
+  return encoding;
+}
+
+std::string GloveHttpRequest::getData(std::string elem) const
+{
+  if (contentType=="application/x-www-form-urlencoded")
+    {
+      auto ud = urlencoded_data.find(elem);
+      if (ud != urlencoded_data.end())
+	return ud->second;
+    }
+
+  return "";
+}
+
 std::string GloveHttpRequest::getData() const
 {
   return data;
@@ -502,6 +532,36 @@ std::string GloveHttpRequest::getVhost()
 GloveBase::uri GloveHttpRequest::getUri() const
 {
   return uri;
+}
+
+void GloveHttpRequest::parseContentType(const std::string& method)
+{
+  /* Only when one of these methods is present */
+  if ( (method=="POST") || (method=="PUT") )
+    {
+      auto ctype = getHeader("Content-Type");
+      if (ctype.empty())
+	return;
+      auto semicolon = ctype.find(';');
+      /* if the ; is the last character found */
+      if ( (semicolon != std::string::npos) && (semicolon<ctype.length()) )
+	{
+	  contentType = trim(ctype.substr(0, semicolon));
+	  auto _encoding = trim(ctype.substr(semicolon+1));
+	  auto _encodingEq = _encoding.find('=');
+	  if ( (_encodingEq != std::string::npos) && (_encoding.substr(0,_encodingEq)=="charset") && (_encodingEq < _encoding.length() ) )
+	    {
+	      encoding = _encoding.substr(_encodingEq+1);
+	    }
+	}
+      else
+	contentType = trim(ctype);
+      if (contentType=="application/x-www-form-urlencoded")
+	{
+	  std::string fragment;
+	  urlencoded_data=Glove::extract_uri_arguments(data, fragment, true);
+	}
+    }
 }
 
 std::string GloveHttpRequest::getAuthData()
@@ -537,6 +597,17 @@ GloveHttpResponse::GloveHttpResponse(std::string contentType):_contentType(conte
 
 GloveHttpResponse::~GloveHttpResponse()
 {
+}
+
+std::string GloveHttpResponse::contentType(std::string newContentType)
+{
+  this->_contentType = newContentType;
+  return this->_contentType;
+}
+
+std::string GloveHttpResponse::contentType()
+{
+  return this->_contentType;
 }
 
 short GloveHttpResponse::code(short rc)
@@ -599,11 +670,12 @@ std::string GloveHttpResponse::getHeaderVary()
   return "Vary: Accept-Encoding" + std::string(Glove::CRLF);
 }
 
-GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, std::vector<std::string> methods):
+GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, std::vector<std::string> methods, bool partialMatch):
   route(route),
   callback(ucb),
   maxArgs(maxArgs), 
-  allowedMethods(methods)
+  allowedMethods(methods),
+  partialMatch(partialMatch)
 {
   if (route.front() != '/')
     route='/'+route;
@@ -646,11 +718,11 @@ bool GloveHttpUri::match(std::string method, GloveBase::uri uri, std::map<std::s
     return false;
 
   auto uria = uri.path.begin();
-
   for (auto a : arguments)
     {
+      /* If partialMatch is true, the url will match too */
       if (uria == uri.path.end())
-	return false;
+	return partialMatch;
 
       if (a.front() == '$')
 	{
@@ -859,10 +931,10 @@ std::string GloveHttpServer::defaultContentType(std::string dct)
   return _defaultContentType;
 }
 
-void GloveHttpServer::addRoute(std::string route, url_callback callback, std::string host, int maxArgs, std::vector<std::string> allowedMethods)
+void GloveHttpServer::addRoute(std::string route, url_callback callback, std::string host, int maxArgs, std::vector<std::string> allowedMethods, bool partialMatch)
 {
   auto vhost = getVHost(host);
-  vhost->routes.push_back(GloveHttpUri(route, callback, maxArgs, allowedMethods));
+  vhost->routes.push_back(GloveHttpUri(route, callback, maxArgs, allowedMethods, partialMatch));
 }
 
 void GloveHttpServer::addResponseProcessor(short errorCode, url_callback callback)
@@ -1092,16 +1164,19 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 	      // Test for error responses...
 	    }
 	}
-      auto resproc = vhost->responseProcessors.find(response.code());
-      if (resproc != vhost->responseProcessors.end())
-	resproc->second(request, response);
-      else
+      if (!response.disableProcessor())
 	{
-	  // Generic processors
-	  resproc = vhost->responseProcessors.find(-response.code()/100);
+	  auto resproc = vhost->responseProcessors.find(response.code());
 	  if (resproc != vhost->responseProcessors.end())
+	    resproc->second(request, response);
+	  else
 	    {
-	      resproc->second(request, response);
+	      // Generic processors
+	      resproc = vhost->responseProcessors.find(-response.code()/100);
+	      if (resproc != vhost->responseProcessors.end())
+		{
+		  resproc->second(request, response);
+		}
 	    }
 	}
       // request chrono, processing chrono..
@@ -1255,7 +1330,7 @@ void GloveHttpServer::addMetrics(GloveHttpRequest& request, double queryTime, do
   metrics.totalProcessingTime+=processingTime;
   metrics.totalResponseTime+=responseTime;
 
-  std::cout << "Request: "<<queryTime<<"s. T:"<<metrics.totalQueryTime<<"."<<std::endl;
-  std::cout << "Processing: "<<processingTime<<"s. T:"<<metrics.totalProcessingTime<<"."<<std::endl;
-  std::cout << "Answer: "<<responseTime<<"s. T:"<<metrics.totalResponseTime<<"."<<std::endl;
+  /* std::cout << "Request: "<<queryTime<<"s. T:"<<metrics.totalQueryTime<<"."<<std::endl; */
+  /* std::cout << "Processing: "<<processingTime<<"s. T:"<<metrics.totalProcessingTime<<"."<<std::endl; */
+  /* std::cout << "Answer: "<<responseTime<<"s. T:"<<metrics.totalResponseTime<<"."<<std::endl; */
 }

@@ -16,6 +16,8 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog:
+*  20160420 : - get_from_uri() arguments separated in extract_uri_arguments to make x-www-form-urlencoded
+*               easier to parse.
 *  20160201 : - select() is now static function too and can handle just one fd, but you can specify.
 *             - receive_fixed don't run input filters on timeout anymore when read_once is enabled
 *  20160129 : - Allowing or denying connection filters
@@ -882,15 +884,68 @@ std::string GloveBase::build_uri (const std::string &service, const std::string 
   return res;
 }
 
+std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string& rawArguments, std::string& fragment, bool urldecode)
+{
+  std::map<std::string, std::string> args;
+
+  auto _slash = rawArguments.find_first_of("&#");
+  std::string::size_type astart = 0;
+  auto push_argument = [&] (bool zerostart=false) {
+    if ( (!zerostart) && (astart==0) )
+      return;
+
+    std::string temp2 = rawArguments.substr(astart, _slash-astart);
+    auto _equal = temp2.find('=');
+    if (urldecode)
+      {
+	if (_equal != std::string::npos)
+	  args[Glove::urldecode(temp2.substr(0,_equal))] = Glove::urldecode(temp2.substr(_equal+1));
+	else
+	  args[Glove::urldecode(temp2)] = "";
+      }
+    else
+      {
+	if (_equal != std::string::npos)
+	  args[temp2.substr(0,_equal)] = temp2.substr(_equal+1);
+	else
+	  args[temp2] = "";
+      }
+  };
+
+  do
+    {
+      if (_slash == std::string::npos)
+	{
+	  push_argument();
+	  break;
+	  /* _slash = rawArguments.length(); */
+	}
+      if (rawArguments[_slash] == '&')
+	{
+	  push_argument(true);
+	}
+      else if (rawArguments[_slash] == '#')
+	{
+	  push_argument();
+	  fragment = rawArguments.substr(_slash+1);
+	  rawArguments = rawArguments.substr(0, _slash);
+	  break;
+	}
+
+      astart = _slash+1;
+    } while (_slash = rawArguments.find_first_of("&#", _slash+1)/* , astart != rawArguments.length() */ );
+
+  return args;
+}
+
 // Ladies and gentlemen, the unmaintainable !
-GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resolve, std::string service_separator)
+GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool urldecode, bool resolve, std::string service_separator)
 {
   // This may be easily done with regex's but my gcc 4.7 is a bit buggy with that
   // or even going through iterators instead of using find and its brothers all the time
   // I hope I have time soon to fix it
   uri _uri;
   std::string _uristring = uristring;
-
   if (service_separator == "")
     service_separator = "://";
 
@@ -958,33 +1013,11 @@ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool resol
 	  _uri.rawpath = _uristring.substr(_slash);
 	}
       else if (start+1 != _slash)
-	_uri.path.push_back(temp);
+	_uri.path.push_back((urldecode)?Glove::urldecode(temp):temp);
       if ( (_uristring[_slash] == '?') || (_uristring[_slash] == '#') )
 	{
-	  _uri.rawarguments = _uristring.substr(_slash);
-	  _slash = _uri.rawarguments.find_first_of("&#");
-	  std::string::size_type astart = 0;
-	  do
-	    {
-	      if (_slash == std::string::npos)
-		_slash = _uri.rawarguments.length();
-	      if (_uri.rawarguments[_slash] == '?')
-		{
-		  std::string temp2 = _uri.rawarguments.substr(astart+1, _slash-astart-1);
-		  auto _equal = temp2.find('=');
-		  if (_equal != std::string::npos)
-		    _uri.arguments[temp2.substr(0,_equal)] = temp2.substr(_equal+1);
-		  else
-		    _uri.arguments[temp2] = "";
-		}
-	      else if (_uri.rawarguments[_slash] == '#')
-		{
-		  _uri.fragment = _uri.rawarguments.substr(_slash+1);
-		  _uri.rawarguments = _uri.rawarguments.substr(0, _slash);
-		  break;
-		}
-	      astart = _slash;
-	    } while (_slash = _uri.rawarguments.find_first_of("&#", _slash+1), astart != _uri.rawarguments.length() );
+	  _uri.rawarguments = _uristring.substr(_slash+1);
+	  _uri.arguments = extract_uri_arguments(_uri.rawarguments, _uri.fragment, urldecode);
 	  break;
 	}
 
