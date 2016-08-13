@@ -583,6 +583,24 @@ public:
     return addr;
   }
 
+#if ENABLE_OPENSSL
+  /**
+   * Gets current status of SSL Timeout
+   */
+  bool get_ssltimeout()
+  {
+    return default_values.ssltimeout;
+  }
+
+  /**
+   * Sets current status of SSL Timeout
+   */
+  void set_ssltimeout(bool newTimeout)
+  {
+    default_values.ssltimeout = newTimeout;
+  }
+#endif
+
   /**
    * Gets connected port. It calls get_address() to get all the
    * information. And throw away what's not needed
@@ -1040,6 +1058,13 @@ protected:
        Used when *sending*
      */
     bool enable_output_filters;
+
+#if ENABLE_OPENSSL
+    /** Times out SSL receiving data. Some kind of bug in openSSL can leave SSL_read frozen and no information
+     * will come. Leaving the process
+     */
+    bool ssltimeout;
+#endif
   };
   /** Default options  */
   local_options  default_values;

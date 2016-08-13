@@ -16,6 +16,9 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog:
+*  20160813 : - prevent old openSSL hung in faulty server responses. SSL_read() is ran in other thread, this one
+*               has a timeout. If GCC<4.9.0 it will use pthread functions directly as workaround. Older G++
+*               versions don't manage timed_mutex.try_lock_for() correctly.
 *  20160420 : - get_from_uri() arguments separated in extract_uri_arguments to make x-www-form-urlencoded
 *               easier to parse.
 *  20160201 : - select() is now static function too and can handle just one fd, but you can specify.
@@ -180,8 +183,11 @@
  *      Found on GloveBase::inet_pton4() when doing inet_pton() and it results <0
  *  39: "Wrong CIDR input"
  *      Found on GloveBase::getNetworkAndMask() when validating CIDR expression
+ *  40: "SSL Timeout. Some kind of bug makes SSL_read() freeze with strange server response on
+ *      certain openSSL versions. With this, an additional timeout is applied, and this
+ *      timeout has ran out.
  */
-
+#undef _GLIBCXX_USE_CLOCK_MONOTONIC
 #include "glove.hpp"
 #include <cstring> // memset(), strerror()
 #include <iostream> // debug only
@@ -718,7 +724,39 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
       std::string buffer(__buffer_size, '\0');
 #if ENABLE_OPENSSL
       if (conn.secureConnection == ENABLE_SSL)
-	bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1);
+	{
+	  if (default_values.ssltimeout)
+	    {
+	      std::timed_mutex sslreadmutex;
+	      sslreadmutex.lock();
+	      std::thread sslthread([&]() {
+		  bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1);
+		  sslreadmutex.unlock();
+		});
+	      sslthread.detach();
+#  if defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__ >= 40900 )
+	      if (!sslreadmutex.try_lock_for(std::chrono::milliseconds((unsigned)(timeout*1000))))
+		{
+#  else
+#  warning "Older GCC version, using workaround to get timed locks"
+		  struct timespec ttout;
+		  clock_gettime(CLOCK_REALTIME, &ttout);
+		  ttout.tv_nsec+= (unsigned)(((long double)timeout-floor(timeout))*1000000000L);
+		  ttout.tv_sec += (time_t)floor(timeout)+ttout.tv_nsec/1000000000L ;
+		  ttout.tv_nsec= ttout.tv_nsec%1000000000L;
+		  int pmt = pthread_mutex_timedlock(sslreadmutex.native_handle(), &ttout);
+		  if (pmt!=0)
+		    {
+#  endif
+		      pthread_cancel(sslthread.native_handle());
+		      throw GloveException(40, "Timed out while receiving SSL data");
+		    }
+		  else
+		    sslreadmutex.unlock();
+		}
+	      else
+		bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1);
+	}
       else
 #endif
 	bytes_received = RECV (conn.sockfd, &buffer[0], buffer.size(), 0);
@@ -1379,6 +1417,7 @@ void Glove::setSSLDefaultValues()
   ssl_options.ssl_method = SSLv23;
   ssl_options.flags = SSL_FLAG_VERIFY_CA;
   ssl_options.CApath = GLOVE_DEFAULT_SSL_CAPATH;
+  default_values.ssltimeout=true;
 }
 
 void Glove::initializeOpenSSL()
