@@ -15,10 +15,13 @@
 *  - send() and recv() are called just once (well recv() twice), so we can replace these functions
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
-* Changelog:
+* Changelog
+*  20160919 : - Fixed compilation for GCC >=5.2:
 *  20160813 : - prevent old openSSL hung in faulty server responses. SSL_read() is ran in other thread, this one
 *               has a timeout. If GCC<4.9.0 it will use pthread functions directly as workaround. Older G++
 *               versions don't manage timed_mutex.try_lock_for() correctly.
+*  20160516 : - fixed some compiling issues for old compilers when SSL_CTX_new() must have a SSL_METHOD* and not
+*               a const SSL_METHOD* (merged 20160919)
 *  20160420 : - get_from_uri() arguments separated in extract_uri_arguments to make x-www-form-urlencoded
 *               easier to parse.
 *  20160201 : - select() is now static function too and can handle just one fd, but you can specify.
@@ -200,6 +203,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <bitset>
+#include <iomanip>
 
 /** Initialization (if any), it was intended to be cross-platform, but time
  goes by and I needed to get this lib in a decent point for Linux. So I didn't
@@ -425,6 +429,7 @@ enum
       return s.c_str();
     }
   }
+#endif
 
 namespace
 {
@@ -437,11 +442,11 @@ namespace
     std::tm tm;
     const time_t tim = std::chrono::system_clock::to_time_t(moment);
     localtime_r(&tim, &tm);
-
-    return std::put_time(&tm, format.c_str());
+		std::stringstream ss;
+		ss << std::put_time(&tm, format.c_str());
+		return ss.str();
   }
 };
-#endif
 
 
 void GloveBase::setsockopt(int level, int optname, void *optval, socklen_t optlen)
@@ -928,6 +933,40 @@ std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string&
 
   auto _slash = rawArguments.find_first_of("&#");
   std::string::size_type astart = 0;
+	
+	auto get_new_key = [] (std::string key, std::string index) {
+    auto pos = key.find("[]");
+    if (pos != std::string::npos)
+      key.replace(pos, 2, "["+index+"]");
+    else
+      key+= "["+index+"]";
+    return key;
+  };
+  auto push_final = [&] (std::string key, std::string val) {
+    auto _key = key;
+    if (_key.find("[]") != std::string::npos)
+      _key.replace(_key.find("[]"), 2, "[");
+
+    int count = std::count_if(args.begin(), args.end(), [_key](std::pair<std::string, std::string> el) -> bool
+    {
+      return (el.first.find(_key) != std::string::npos);
+    });
+    if (count>0)
+      {
+	auto alone = args.find(key);
+	std::string newKey;
+	if (alone != args.end())
+	  {
+	    auto alone_copy(*alone);
+	    args.erase(alone);
+	    args[get_new_key(alone_copy.first,"0")] = alone_copy.second;
+	  }
+	args[get_new_key(key, std::to_string(count))] = val;
+      }
+    else
+      args[key] = val;
+  };
+	
   auto push_argument = [&] (bool zerostart=false) {
     if ( (!zerostart) && (astart==0) )
       return;
@@ -936,17 +975,17 @@ std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string&
     auto _equal = temp2.find('=');
     if (urldecode)
       {
-	if (_equal != std::string::npos)
-	  args[Glove::urldecode(temp2.substr(0,_equal))] = Glove::urldecode(temp2.substr(_equal+1));
-	else
-	  args[Glove::urldecode(temp2)] = "";
+				if (_equal != std::string::npos)
+					push_final(Glove::urldecode(temp2.substr(0,_equal)), Glove::urldecode(temp2.substr(_equal+1)));
+				else
+					push_final(Glove::urldecode(temp2), "");
       }
     else
       {
-	if (_equal != std::string::npos)
-	  args[temp2.substr(0,_equal)] = temp2.substr(_equal+1);
-	else
-	  args[temp2] = "";
+				if (_equal != std::string::npos)
+					push_final(temp2.substr(0,_equal), temp2.substr(_equal+1));
+				else
+					push_final(temp2, "");
       }
   };
 

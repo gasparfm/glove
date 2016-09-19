@@ -83,7 +83,8 @@ class GloveHttpRequest
   std::string getLocation() const;
   std::string getRawLocation() const;
   std::string getData() const;
-  std::string getData(std::string el) const;
+  std::string getData(std::string el, bool exact=true) const;
+  std::vector<std::pair<std::string, std::string> > getDataCol(std::string el, bool exact=true) const;
   std::string getContentType() const;
   std::string getEncoding() const;
   std::map<std::string, std::string> getHeaders() const;

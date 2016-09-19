@@ -14,6 +14,7 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20160919 : More options to get data from requests GetData(), GetDatacol()
 *  20160421 : some server info extracted
 *  20160420 : application/x-www-form-urlencoded arguments parse
 *  20160418 : Response processors can be disabled
@@ -491,17 +492,62 @@ std::string GloveHttpRequest::getEncoding() const
 {
   return encoding;
 }
-
-std::string GloveHttpRequest::getData(std::string elem) const
+std::string GloveHttpRequest::getData(std::string elem, bool exact) const
 {
   if (contentType=="application/x-www-form-urlencoded")
     {
-      auto ud = urlencoded_data.find(elem);
-      if (ud != urlencoded_data.end())
-	return ud->second;
+      if (exact)
+	{
+	  auto ud = urlencoded_data.find(elem);
+	  if (ud != urlencoded_data.end())
+	    return ud->second;
+	}
+      else
+	{
+	  auto ud = std::find_if(urlencoded_data.begin(), urlencoded_data.end(), [elem](std::pair<std::string, std::string> el)->bool
+	  	       {
+	  		 if (el.first.find(elem)!=std::string::npos)
+	  		   return true;
+	  	       });
+	  if (ud != urlencoded_data.end())
+	    return ud->second;
+	}
     }
 
   return "";
+}
+
+std::vector<std::pair<std::string, std::string> > GloveHttpRequest::getDataCol(std::string el, bool exact) const
+{
+  std::vector<std::pair<std::string, std::string> > res;
+
+  if (contentType=="application/x-www-form-urlencoded")
+    {
+      if (exact)
+	{
+	  for (auto elem : urlencoded_data)
+	    {
+	      if (elem.first == el)
+		res.push_back(elem);
+	    }
+	}
+      else
+	{
+	  /* Replace [] with [ to save brackets.
+	     We can use regex in the future when
+	     fully supported */
+	  auto brackets = el.find("[]");
+	  if (brackets != std::string::npos)
+	    el.replace(brackets, 2, "[");
+
+	  for (auto elem : urlencoded_data)
+	    {
+	      if (elem.first.find(el) != std::string::npos)
+		res.push_back(elem);
+	    }
+	}
+    }
+  return res;
 }
 
 std::string GloveHttpRequest::getData() const
