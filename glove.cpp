@@ -415,7 +415,7 @@ enum
 };
 
 /* Support for older versions of GCC */
-#if defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__ <= 50200 )
+#if defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__ <= 40902 )
   namespace std
   {
     static std::string put_time( const std::tm* tmb, const char* fmt )
