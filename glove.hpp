@@ -24,7 +24,7 @@
 #   define GLOVEDEBUG 1
 #endif
 
-#include <exception>
+#include "gloveexception.hpp"
 #include <string>
 #include <vector>
 #include <functional>
@@ -95,75 +95,6 @@ namespace
 	
   // this is the function signature of std::endl
   typedef ostream_type& (*ostream_manipulator)(ostream_type&);
-};
-
-/**
-   General exceptions will be this type. It's a simple exception class, just with a code
-   and message.
- */
-class GloveException : public std::exception
-{
-public:
-  /**
-   * GloveException
-   *
-   * @param code      Error code
-   * @param message   Error message
-   *
-   */
-  GloveException(const int& code, const std::string &message): _code(code), _message(message)
-  {
-  }
-
-  virtual ~GloveException() throw ()
-  {
-  }
-
-  /**
-   * Exception message int char*
-   */
-  const char* what() const throw()
-  {
-    return _message.c_str();
-  }
-
-  /**
-   * Exception error code
-   *
-   * @return error code
-   */
-  int code() const
-  {
-    return _code;
-  }
-
-protected:
-  /** Error code */
-  int _code;
-  /** Error message  */
-  std::string _message;
-};
-
-/**
-   URI exceptions. Fails addressing a resource
- */
-class GloveUriException : public GloveException
-{
-public:
-  /**
-   * GloveUriException
-   *
-   * @param code      Error code
-   * @param message   Error message
-   *
-   */
-  GloveUriException(const int& code, const std::string &message): GloveException(code, message)
-  {
-  }
-
-  virtual ~GloveUriException() throw ()
-  {
-  }
 };
 
 /**
@@ -311,6 +242,10 @@ public:
     /** Port  */
     int port;
 
+		std::string servicehost()
+		{
+			return GloveBase::build_uri(service, host, port);
+		}
     /**
      * DEBUG Only: used to get information about this URI, to print on
      *       screen/write to a file/etc, but not a suitable format for
@@ -917,50 +852,6 @@ public:
    * @return Service name in string
    */
   static std::string getServByPort(int port);
-
-  /**
-   * URL Encode string. To make it suitable for trasceiving with some protocols.
-   * borrowed from original knot https://github.com/r-lyeh/knot
-   * knot had adapted it from code by Fred Bulback
-   *
-   * @param str String to urlencode 
-   *
-   * @return urlencoded string
-   */
-  static std::string urlencode( const std::string &str );
-
-  /**
-   * URL Decode string. To make it readable easily after transceiving by some protocols
-   * borrowed from original knot https://github.com/r-lyeh/knot
-   * knot had adapted it from code by Fred Bulback
-   *
-   * @param str String to urldecode
-   *
-   * @return urldecoded string
-   */
-  static std::string urldecode( const std::string &str );
-
-  /**
-   * Base64 encode a string.
-   * Originally by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
-   * Left as char* because sometimes it's useful to encode a file when reading it.
-   *
-   * @param s     String to encode
-   * @param len   How many bytes to encode
-   *
-   * @return encoded string
-   */
-  static std::string base64_encode(unsigned char const* s, unsigned int len);
-
-  /**
-   * Base64 decode a string.
-   * Originally by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
-   *
-   * @param s    String to decode
-   *
-   * @return decoded string .
-   */
-  static std::string base64_decode(std::string const& s);
 
 protected:
 #if ENABLE_OPENSSL

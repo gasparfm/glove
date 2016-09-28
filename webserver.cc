@@ -21,7 +21,7 @@
 *
 *************************************************************/
 
-#include "glovehttpserver.h"
+#include "glovehttpserver.hpp"
 #include <iostream>
 #include <chrono>
 #include <thread>
