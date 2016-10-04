@@ -14,6 +14,14 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20161004 : Minor connection bugs fixed
+*  20161003 : Fixed bug. Error 500 when compression not enabled.
+*           : HTTPS server
+*  20161001 : Basic WebSockets support with. server.addWebSocket adds
+*           : web socket route.
+*  20160929 : fixed bug when clearing output
+*           : ability to change headers from response object
+*           : added compression support with zlib
 *  20160928 : addRest and overloads to get easy RESTful Api.
 *           : Error handler and exception (GloveApiException) for Api.
 *  20160916 : addRoute has one more argument (minArgs).
@@ -45,7 +53,6 @@
 *   - Max. size of strings
 *   - Size test of strings
 *   - Be able to process FastCGI requests to use with Apache/NGinx and more
-*   - Compression
 *   - Cache managing
 *
 * MIT Licensed:
@@ -78,6 +85,11 @@
 #include <map>
 #include <string>
 #include <algorithm>
+#include <memory>
+
+#if ENABLE_COMPRESSION
+#include "glovecompress.hpp"
+#endif
 
 const std::vector < std::string> GloveHttpServer::StandardMethods ={ "GET", "POST" };
 
@@ -104,6 +116,7 @@ std::map<std::string, std::string> GloveHttpServer::_mimeTypes = {
   {"html", "text/html"},
   {"json", "application/json"},
   {"php", "text/html"},
+	{"js", "text/js" },
   {"css", "text/css"},
   {"js", "text/javascript"},
   {"woff", "application/font-woff"},
@@ -239,14 +252,14 @@ std::vector<std::pair<std::string, std::string> > GloveHttpRequest::getDataCol(s
   return res;
 }
 
-std::string GloveHttpRequest::getData() const
+std::string& GloveHttpRequest::getData() const
 {
-  return data;
+  return const_cast<std::string&> (data);
 }
 
-std::map<std::string, std::string> GloveHttpRequest::getHeaders() const
+std::map<std::string, std::string>& GloveHttpRequest::getHeaders() const
 {
-  return headers;
+  return const_cast<std::map<std::string, std::string>&> (headers);
 }
 
 std::string GloveHttpRequest::getHeader(std::string h) const
@@ -256,6 +269,19 @@ std::string GloveHttpRequest::getHeader(std::string h) const
     return el->second;
 
   return "";
+}
+
+bool GloveHttpRequest::connectionIs(std::string what)
+{
+	if (connectionHeader.size()==0) {
+		connectionHeader = tokenize(headers["Connection"], ",", defaultTrim);
+	}
+	for (auto c: connectionHeader)
+		{
+			if (c == what)
+				return true;
+		}
+	return false;
 }
 
 std::string GloveHttpRequest::getVhost()
@@ -325,7 +351,7 @@ std::string GloveHttpRequest::getMessage(std::string _template)
   
 }
 
-GloveHttpResponse::GloveHttpResponse(std::string contentType):_contentType(contentType),_responseCode(GloveHttpResponseCode::OK)
+GloveHttpResponse::GloveHttpResponse(std::string contentType):_contentType(contentType),_responseCode(GloveHttpResponseCode::OK),compression(true)
 {
 
 }
@@ -353,22 +379,84 @@ short GloveHttpResponse::code(short rc)
   return _responseCode;
 }
 
+std::string GloveHttpResponse::header(std::string name)
+{
+	auto header = headers.find("name");
+	return (header != headers.end())?header->second:"";
+}
+
+std::string GloveHttpResponse::header(std::string name, std::string value)
+{
+	headers[name] = value;
+	return value;
+}
+
+bool GloveHttpResponse::hasHeader(std::string name)
+{
+	auto header = headers.find("name");
+	return (header != headers.end());
+}
+
+int GloveHttpResponse::applyCompression(GloveHttpRequest &request, std::vector<std::string>& compression)
+{
+	std::string compressionMethod;
+
+	if ( (!ENABLE_COMPRESSION) || (!this->compression) || (output.tellp()<100) || (!compressionPossible(request.getHeaders(), compressionMethod)) )
+		return 0;
+  #if ENABLE_COMPRESSION
+	std::string out;
+	auto chosenMethod = GloveCompress::getCompressionMethod(compressionMethod, compression);
+	if (chosenMethod == -1)
+		return 0;
+	if (GloveCompress::dodeflate(output.str(), out,
+															 chosenMethod,
+																						 Z_BEST_COMPRESSION)<0)
+		{
+			return -1;
+		}
+
+	output.clear();
+	output.str("");
+	output << out;
+	header("Content-Encoding", GloveCompress::getCompressionMethodName(chosenMethod));
+	return 1;
+	#endif
+}
+
 void GloveHttpResponse::send(GloveHttpRequest &request, Glove::Client &client)
 {
   std::string outputStr = output.str();
-  client << "HTTP/1.1 "<<std::to_string(code())<<" "<<responseMessage()<<Glove::CRLF;
-  client << "Date: "<<rfc1123date()<<Glove::CRLF;
+  client << "HTTP/1.1 "<<std::to_string(code())<<" "<<responseMessage()<<GloveDef::CRLF;
+  client << "Date: "<<rfc1123date()<<GloveDef::CRLF;
 
   // Server Signature
   std::string serverSig = request.server()->simpleSignature();
   if (!serverSig.empty())
-    client << "Server: "<<serverSig<<Glove::CRLF;
+    client << "Server: "<<serverSig<<GloveDef::CRLF;
 
+	for (auto h: headers)
+		{
+			client << h.first <<": "<< h.second << GloveDef::CRLF;
+		}
   client << getHeaderVary();
-  client << "Content-Length: "<<outputStr.size()<<Glove::CRLF;
-  client << "Content-Type: "<<_contentType<<Glove::CRLF;
-  client << Glove::CRLF;
+  client << "Content-Length: "<<outputStr.size()<<GloveDef::CRLF;
+  client << "Content-Type: "<<_contentType<<GloveDef::CRLF;
+  client << GloveDef::CRLF;
   client << outputStr;
+}
+
+std::string GloveHttpResponse::getFinalOutput(std::vector<std::string>& compression, std::map<std::string, std::string>& headers)
+{
+}
+
+bool GloveHttpResponse::compressionPossible(std::map<std::string, std::string>& headers, std::string& compressionMethod)
+{
+	auto accept = std::find_if(headers.begin(), headers.end(), lowerCaseCompare("accept-encoding"));
+	if (accept == headers.end())
+		return false;
+	compressionMethod = accept->second;
+		
+	return true;
 }
 
 short GloveHttpResponse::file(std::string filename, bool addheaders, std::string contentType)
@@ -383,25 +471,34 @@ short GloveHttpResponse::file(std::string filename, bool addheaders, std::string
 
   *this << setContentType((contentType.empty())?GloveHttpServer::getMimeType(extension):contentType);
   *this << fileContents;
+
   return GloveHttpErrors::ALL_OK;
 }
 
 void GloveHttpResponse::clear()
 {
-  output.clear();
+	headers.clear();
+  output.clear();								/* Clears error flags */
+	output.str("");
 }
 
 std::string GloveHttpResponse::getHeaderVary()
 {
-  return "Vary: Accept-Encoding" + std::string(Glove::CRLF);
+  return "Vary: Accept-Encoding" + std::string(GloveDef::CRLF);
 }
 
-GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, int minArgs, std::vector<std::string> methods, bool partialMatch):
+namespace
+{
+	GloveUriHttpService gloveUriHttpService;
+};
+
+GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, int minArgs, std::vector<std::string> methods, bool partialMatch, GloveUriService& mission):
   route(route),
   callback(ucb),
   maxArgs(maxArgs), 
   allowedMethods(methods),
-  partialMatch(partialMatch)
+  partialMatch(partialMatch),
+	_mission(mission)
 {
   if (route.front() != '/')
     route='/'+route;
@@ -412,6 +509,10 @@ GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, in
     this->maxArgs=totalargs;
 	if (this->maxArgs != this->minArgs)
 		this->partialMatch = true;
+}
+
+GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, int minArgs, std::vector<std::string> methods, bool partialMatch):GloveHttpUri(route, ucb, maxArgs, minArgs, methods, partialMatch, gloveUriHttpService)
+{
 }
 
 int GloveHttpUri::explodeArgs()
@@ -599,7 +700,14 @@ void GloveHttpServer::baseInitialization()
   _serverSignature = "Glove Http Server/" GHS_VERSION_STR " at {:serverHost} Port {:serverPort}";
   _simpleSignature = "Glove Http Server/" GHS_VERSION_STR;
   _defaultContentType = "text/html; charset=UTF-8";
+	/* Each 5ms it will process messages */
+	wsInterval=5;
+	/* Each 100 intervals will call maintenance function */
+	wsMaintenanceInterval = 100;
 
+	/* Web Socket messages will be 32768 octets long */
+	wsFragmentation = 32768;
+	
   if (addVhost("%") != GloveHttpErrors::ALL_OK)
     return;			/* Exception here? */
 
@@ -611,7 +719,7 @@ GloveHttpServer::GloveHttpServer()
   baseInitialization();
 }
 
-void GloveHttpServer::listen(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout)
+void GloveHttpServer::listen(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout, int secure, std::string certchain, std::string certkey)
 {
   port = listenPort;
   namespace ph = std::placeholders;
@@ -628,21 +736,25 @@ void GloveHttpServer::listen(int listenPort, std::string bind_ip, const size_t b
   // addAutoResponse(RESPONSE_ERROR, GloveHttpResponse::defaultResponseTemplate);
   // messages = _defaultMessages;
 
-  server = new Glove(listenPort, 
-										 std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
-										 bind_ip,
-										 buffer_size, 
-										 std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3),
-										 backlog_queue,
-										 domain);
+  server = new Glove();
+	server->server_error_callback(								std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3));
+	server->buffer_size(buffer_size);
+	server->listen(listenPort, 
+								std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
+								bind_ip,
+								backlog_queue,
+								domain,
+								secure,
+								certchain,
+								certkey);
   server->max_accepted_clients(max_accepted_clients);
   server->timeout(timeout);
 }
 
-GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout)
+GloveHttpServer::GloveHttpServer(int listenPort, std::string bind_ip, const size_t buffer_size, const unsigned backlog_queue, int domain, unsigned max_accepted_clients, double timeout, double keepalive_timeout, int secure, std::string certchain, std::string certkey)
 {
   baseInitialization();
-  listen(listenPort, bind_ip, buffer_size, backlog_queue, domain, max_accepted_clients, timeout, keepalive_timeout);
+  listen(listenPort, bind_ip, buffer_size, backlog_queue, domain, max_accepted_clients, timeout, keepalive_timeout, secure, certchain, certkey);
 }
 
 GloveHttpServer::~GloveHttpServer()
@@ -659,6 +771,29 @@ std::string GloveHttpServer::defaultContentType(std::string dct)
     _defaultContentType = dct;
 
   return _defaultContentType;
+}
+
+void GloveHttpServer::addWebSocket(std::string route, url_callback callback, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback, ws_maintenance_callback closeCallback, std::string host, int maxArgs, int minArgs, bool partialMatch, url_callback normalhttp)
+{
+  auto vhost = getVHost(host);
+
+	/* Any smarter way to do this?
+		   - GloveUriService is an abstract class.
+	     - GloveHttpUri must receive a reference to an object derived from GloveUrihttpservice
+			 - I created this static vector just to store all Services in a vector, but it's
+			   like a lost pointer... Memory won't be freed... well when the server is destroyed.
+				 Very few bytes and must be stored while
+				 the service is running, feel a bit uncomfortable with this.
+	*/
+	static std::vector<std::shared_ptr<GloveUriWebSocketService>> references;
+	auto service = std::make_shared<GloveUriWebSocketService>(GloveUriWebSocketService(acceptCallback, receiveCallback, maintenanceCallback, closeCallback, wsInterval, wsMaintenanceInterval, wsFragmentation));
+	references.push_back(service);
+  vhost->routes.push_back(GloveHttpUri(route, callback, maxArgs, minArgs, { "GET" }, partialMatch, *service));
+}
+
+void GloveHttpServer::addWebSocket(std::string route, url_callback callback, int maxArgs, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback, ws_maintenance_callback closeCallback, int minArgs, bool partialMatch, url_callback normalhttp)
+{
+	addWebSocket(route, callback, acceptCallback, receiveCallback, maintenanceCallback, closeCallback, defaultVhostName, maxArgs, minArgs, partialMatch, normalhttp);
 }
 
 void GloveHttpServer::addRoute(std::string route, url_callback callback, std::string host, int maxArgs, int minArgs, std::vector<std::string> allowedMethods, bool partialMatch)
@@ -863,7 +998,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, s
 				{
 					// Don't have enough information
 					// CRLF not yet received
-					if ( (first_crlf = input.find(Glove::CRLF) ) == std::string::npos)
+					if ( (first_crlf = input.find(GloveDef::CRLF) ) == std::string::npos)
 						continue;
 
 					if ( first_crlf < 9 )
@@ -936,7 +1071,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, s
 //   - https://github.com/r-lyeh/knot
 int GloveHttpServer::clientConnection(Glove::Client &client)
 {
-  std::cout << "IP: "<<client.get_address(true)<<std::endl;
+	//  std::cout << "IP: "<<client.get_address(true)<<std::endl;
 
   bool finished = false;
   unsigned totalRequests = 0;
@@ -958,7 +1093,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
       /* new request */
       GloveHttpResponse response(_defaultContentType);
-      std::cout << "Request: "<<raw_location<<std::endl;
+			//      std::cout << "Request: "<<raw_location<<std::endl;
       auto vhost = getVHost(request.getVhost());
       if (error)
 				{
@@ -980,6 +1115,8 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 					GloveHttpUri *guri;
 					if (findRoute(*vhost, request_method, request.getUri(), guri, request.special))
 						{
+							if ((guri->mission().name()=="websocket") && (webSocketHandshake(client, request)) )
+								return doWebSockets(client, guri, request, response);
 							guri->callAction(request, response);
 						}
 					else
@@ -988,23 +1125,16 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 							// Test for error responses...
 						}
 				}
-      if (!response.disableProcessor())
-				{
-					auto resproc = vhost->responseProcessors.find(response.code());
-					if (resproc != vhost->responseProcessors.end())
-						resproc->second(request, response);
-					else
-						{
-							// Generic processors
-							resproc = vhost->responseProcessors.find(-response.code()/100);
-							if (resproc != vhost->responseProcessors.end())
-								{
-									resproc->second(request, response);
-								}
-						}
-				}
+			applyProcessors(vhost, request, response, response.code());
       // request chrono, processing chrono..
       auto processingTime = std::chrono::steady_clock::now();
+			if (response.applyCompression(request, ghoptions.compression)<0)
+				{
+					std::cout << "LA COMPRESION SALE MAL\n";
+					response << GloveHttpResponse::setCode(GloveHttpResponseCode::INTERNAL_ERROR);
+					applyProcessors(vhost, request, response, response.code());
+				}
+
       response.send(request, client);
       auto responseTime = std::chrono::steady_clock::now();
       addMetrics(request, (double) std::chrono::duration_cast<std::chrono::milliseconds>(requestTime - startTime).count() / 1000,
@@ -1015,6 +1145,135 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       /* Maybe we can store this measure too */
       startTime = std::chrono::steady_clock::now();
     } while (!finished);
+}
+
+bool GloveHttpServer::webSocketHandshake(Glove::Client& client, GloveHttpRequest& req)
+{
+	/* Header "Connection: Upgrade"
+	   Header "Upgrade: websocket" */
+	//	std::cout << "Handshake: "<<(req.connectionIs("Upgrade"))<<", "<<req.getHeader("Upgrade")<<std::endl;
+
+	if ( (req.connectionIs("Upgrade")) && (req.getHeader("Upgrade") != "websocket") )
+		return false;
+
+	if (req.getHeader("Sec-WebSocket-Version")=="13")
+			return webSocket13Handshake(client, req);
+
+	return false;
+}
+
+bool GloveHttpServer::webSocket13Handshake(Glove::Client& client, GloveHttpRequest& req)
+{
+	/* Magic number for websocket handshake */
+	static std::string magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+	auto key = req.getHeader("Sec-WebSocket-Key");
+	if (key.empty())
+		return false;
+	auto acceptHash = GloveCoding::sha1_b64(key+magic);
+	/* Switching protocols */
+	client << "HTTP/1.1 101 Web Socket Protocol Handshake"<<GloveDef::CRLF;
+	client << "access-control-allow-credentials: true"<<GloveDef::CRLF;
+	client << "Access-Control-Allow-Headers: x-websocket-version"<< GloveDef::CRLF;
+	client << "Access-Control-Allow-Origin: null"<< GloveDef::CRLF;
+	client << "Connection: Upgrade" << GloveDef::CRLF;
+	client << "Date: "<<rfc1123date()<<GloveDef::CRLF;
+
+  std::string serverSig = req.server()->simpleSignature();
+  if (!serverSig.empty())
+    client << "Server: "<<serverSig<<GloveDef::CRLF;
+	client << "Sec-WebSocket-Accept: "<<acceptHash<<GloveDef::CRLF;
+	client << "Upgrade: websocket" << GloveDef::CRLF;
+	client <<GloveDef::CRLF;
+
+	return true;
+}
+
+int GloveHttpServer::doWebSockets(Glove::Client& client, GloveHttpUri* guri, GloveHttpRequest& request, GloveHttpResponse& response)
+{
+	auto ws = dynamic_cast<GloveUriWebSocketService&>(guri->mission());
+	auto handler = GloveWebSocketHandler(client, ws.fragmentation());
+	auto wsdata = GloveWebSocketData();
+
+	bool finish = false;
+	double interval = (double)ws.interval()/1000;
+	uint64_t intervalCount=0;
+	ws.accept(request, handler);
+	while (!finish)
+		{
+			std::string incoming;
+			auto error = client.receive2(incoming, interval, 0);
+			if (error == 0)
+				{
+					auto frame = GloveWebSocketFrame(incoming);
+
+					/* Control frames MUST have <=125bytes payload
+					   Control data IS NOT fragmented */
+					if (frame.error())
+						{
+							handler.close(1, "Unexpected error");
+							finish = true;
+						}
+					if (frame.opcode()==GloveWebSocketFrame::TYPE_PING)
+						handler.pong(frame);
+					else if (frame.opcode()==GloveWebSocketFrame::TYPE_CLOSE)
+						{
+							handler.close(frame);
+							finish = true;		/* Received a close! */
+						}
+					else if (frame.opcode()==GloveWebSocketFrame::TYPE_PONG)
+						handler.pong();
+					else
+						{
+							wsdata.update(frame);
+							ws.receive(wsdata, handler);							
+						}
+
+					/* We have data */
+				}
+			else if (error == 8 || error == 40 || error == 9)
+				{
+					std::cout << "Connection error" << std::endl;
+					finish = true;
+					/* Connection errors */
+				}
+			else if (error == 21)
+				{
+					finish = true;
+					std::cout << "SHUTDOWN!!!!"<<std::endl;
+					/* Peer shutdown */
+				}
+			/* else if (error == 7) // timeout
+			 {
+			  // Carry on my wayward son...
+				// No need to exit or do anything
+			}*/
+			if ((!finish) && (++intervalCount % ws.intervalsMaintenance()==0) )
+				{
+					intervalCount=0;
+					finish = ws.maintenance(handler);
+				}
+		}
+	ws.close(handler);
+	return 0;
+}
+
+void GloveHttpServer::applyProcessors(VirtualHost* vhost, GloveHttpRequest& request, GloveHttpResponse& response, int code)
+{
+	if (response.disableProcessor())
+		return;
+	auto resproc = vhost->responseProcessors.find(response.code());
+	if (resproc != vhost->responseProcessors.end())
+		resproc->second(request, response);
+	else
+		{
+			// Generic processors
+			resproc = vhost->responseProcessors.find(-response.code()/100);
+			if (resproc != vhost->responseProcessors.end())
+				{
+					resproc->second(request, response);
+				}
+		}
 }
 
 void GloveHttpServer::gloveError(Glove::Client &client, int clientId, GloveException &e)
@@ -1057,6 +1316,14 @@ void GloveHttpServer::fileServerExt(GloveHttpRequest &request, GloveHttpResponse
     response.file(request.special["filename"]); /* just as fileServer*/
   else
     response.file(localPath+request.special["filename"]);
+}
+
+void GloveHttpServer::fileServerFixed(GloveHttpRequest &request, GloveHttpResponse& response, std::string path)
+{
+	if (response.file(path) != GloveHttpErrors::ALL_OK)
+		{
+			response.code(404);
+		}
 }
 
 std::string GloveHttpServer::getMimeType(std::string extension)

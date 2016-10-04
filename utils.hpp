@@ -38,14 +38,22 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include <unistd.h>
 #include <fcntl.h>
 #include <ctime>
+#include <functional>
+#include <algorithm>
+#include <map>
 
-static std::string white_spaces =" \f\n\r\t\v" ;
-static std::string CRLF = "\r\n";
-	
-static std::string trim( std::string str, const std::string& trimChars = white_spaces )
+namespace GloveDef
+{
+	static std::string white_spaces =" \f\n\r\t\v" ;
+	static std::string CRLF = "\r\n";
+	static std::string CRLF2= "\r\n\r\n";
+};
+
+static std::string trim( std::string str, const std::string& trimChars = GloveDef::white_spaces)
 {
 	if (str.empty())
 		return "";
@@ -53,6 +61,13 @@ static std::string trim( std::string str, const std::string& trimChars = white_s
 	std::string::size_type pos_start = str.find_first_not_of( trimChars );
 
 	return str.substr( pos_start, pos_end - pos_start + 1 );
+}
+
+/* When using as callback some compilers can't detect the
+ right trim() to use. */
+static std::string defaultTrim( std::string str)
+{
+	return trim(str, GloveDef::white_spaces);
 }
 
   // We could use regex but gcc 4.8 still hasn't implemented them.
@@ -141,7 +156,7 @@ static std::string trim( std::string str, const std::string& trimChars = white_s
 
     std::string s( 128, '\0' );
     s = std::string(day_names[tm.tm_wday])+", "+std::to_string(tm.tm_mday)+" "+
-      std::string(month_names[tm.tm_mon])+" "+std::to_string(tm.tm_year)+" "+
+      std::string(month_names[tm.tm_mon])+" "+std::to_string(1900+tm.tm_year)+" "+
       std::to_string(tm.tm_hour)+":"+std::to_string(tm.tm_min)+":"+
       std::to_string(tm.tm_sec)+" GMT";
 
@@ -154,3 +169,48 @@ static bool validHost(std::string hostName)
     static const char* validChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.";
     return (hostName.find_first_not_of(validChars) == std::string::npos);
   }
+
+// Tokenizer from: http://oopweb.com/CPP/Documents/CPPHOWTO/Volume/C++Programming-HOWTO-7.html
+// Modified
+static std::vector<std::string> tokenize(const std::string& str,
+																				 const std::string& delimiters = " ",
+																				 std::function<std::string (std::string)> callback = nullptr)
+{
+	std::vector<std::string> tokens;
+	// Skip delimiters at beginning.
+	std::string::size_type lastPos = str.find_first_not_of(delimiters, 0);
+	// Find first "non-delimiter".
+	std::string::size_type pos     = str.find_first_of(delimiters, lastPos);
+
+	while (std::string::npos != pos || std::string::npos != lastPos)
+    {
+			// Found a token, add it to the vector.
+			auto item = str.substr(lastPos, pos - lastPos);
+			tokens.push_back((callback == nullptr)?item:callback(item));
+			// Skip delimiters.  Note the "not_of"
+			lastPos = str.find_first_not_of(delimiters, pos);
+			// Find next "non-delimiter"
+			pos = str.find_first_of(delimiters, lastPos);
+    }
+	return tokens;
+}
+
+static std::string& toLower(std::string& s)
+{
+	std::transform(s.begin(), s.end(), s.begin(), (int(*)(int)) tolower );
+	return s;
+}
+
+struct lowerCaseCompare
+{
+	std::string compareWith;
+	lowerCaseCompare(std::string s): compareWith(toLower(s))
+	{
+	}
+
+	bool operator()(std::map<std::string, std::string>::value_type& s)
+	{
+		auto str = s.first;
+		return (toLower(str)==compareWith);
+	}
+};

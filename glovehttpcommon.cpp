@@ -191,7 +191,7 @@ void GloveHttpCommon::extract_headers( std::string input, std::map<std::string, 
 	std::string::size_type crlf;
 
 	if ( ( colon = input.find(':', start) ) != std::string::npos && 
-			 ( ( crlf = input.find(CRLF, start) ) != std::string::npos ) )
+			 ( ( crlf = input.find(GloveDef::CRLF, start) ) != std::string::npos ) )
 		{
 			if (crlf<colon)
 				{

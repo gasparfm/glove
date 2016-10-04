@@ -2,6 +2,14 @@
 
 #include <string>
 #include <sstream>
+#include <cstdlib>
+#include "utils.hpp"
+#if ENABLE_OPENSSL
+#include <openssl/sha.h>
+#include "sha1.hpp"
+#else
+#include "sha1.hpp"
+#endif
 
 namespace
 {
@@ -158,4 +166,67 @@ namespace GloveCoding
 	}
 
 	const std::string qp_encode(const char *src);
+
+		static std::string bin2hex(const std::string& in)
+	{
+    std::stringstream ss;
+
+    ss << std::hex << std::setfill('0');
+    for (size_t i = 0; in.length() > i; ++i)
+			{
+				ss << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(in[i]));
+			}
+
+    return ss.str(); 
+	}
+
+	static std::string hex2bin(const std::string& in)
+	{
+    std::string output;
+
+    if ((in.length() % 2) != 0)
+			{
+				return "";
+			}
+
+    size_t cnt = in.length() / 2;
+
+    for (size_t i = 0; cnt > i; ++i)
+			{
+				uint32_t s = 0;
+				std::stringstream ss;
+				ss << std::hex << in.substr(i * 2, 2);
+				ss >> s;
+
+				output.push_back(static_cast<unsigned char>(s));
+			}
+
+    return output;
+	}
+
+	static std::string sha1(std::string origin)
+	{
+		/* openssl method is muuuuuuuuch faster */
+		#if ENABLE_OPENSSL
+		std::string hash(20, '\0');
+		SHA1((const unsigned char*)origin.c_str(),
+				 origin.length(),
+				 (unsigned char*)&hash[0]);
+		return hash;
+		#else
+		Digest::SHA1 checksum;
+    checksum.update(origin);
+    return checksum.final();
+		#endif
+	}
+
+	static std::string sha1_b64(std::string origin)
+	{
+		return base64_encode((unsigned char*)sha1(origin).c_str(), 20);
+	}
+
+	static std::string sha1_hex(std::string origin)
+	{
+		return bin2hex(sha1(origin));
+	}
 };

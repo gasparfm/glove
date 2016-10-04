@@ -14,6 +14,7 @@
 *   - Changes and improvements are welcome! Issue/fork on GitHub
 * 
 * Changelog
+*  20161004 : - Using CRLF from utils.hpp
 *  20160927 : - First release
 *
 * To-do:
@@ -49,11 +50,6 @@
 #include "gloveexception.hpp"
 #include <cstring>
 #include <algorithm>
-
-namespace
-{
-	std::string CRLF = "\r\n";
-};
 
 void GloveMultipartPart::init(std::string& content, std::vector<Meta> meta)
 {
@@ -106,7 +102,7 @@ std::string GloveMultipartPart::debugMeta()
 	std::string out;
 	for (auto met : metaData)
 		{
-			out+=met.name+": "+metaInfo(met)+CRLF;
+			out+=met.name+": "+metaInfo(met)+GloveDef::CRLF;
 		}
 	
 	return out;
@@ -203,9 +199,9 @@ std::string GloveMultipartPart::str()
 	std::string out;
 	for (auto met : metaData)
 		{
-			out+=metaInfo(met, true)+CRLF;
+			out+=metaInfo(met, true)+GloveDef::CRLF;
 		}
-	out+=CRLF;
+	out+=GloveDef::CRLF;
 	auto transferEncoding = getMeta("Content-Transfer-Encoding");
 	std::transform(transferEncoding.begin(), transferEncoding.end(), transferEncoding.begin(), ::tolower);
 	if ( (transferEncoding == "binary") || (transferEncoding == "") )
@@ -219,7 +215,7 @@ std::string GloveMultipartPart::str()
 			throw GloveException(100, "Transfer-Encoding method "+transferEncoding+" not implemented.");
 		}
 
-	return out+CRLF;
+	return out+GloveDef::CRLF;
 }
 
 
@@ -230,7 +226,7 @@ GloveMultipartPart::~GloveMultipartPart()
 
 void GloveMultipartPart::parseContent(std::string& content)
 {
-	auto crlfcrlf = content.find(CRLF+CRLF);
+	auto crlfcrlf = content.find(GloveDef::CRLF2);
 	if (crlfcrlf == content.npos)
 		throw GloveException(101, "Invalid multipart part data. Could not find CRLFCRLF");
 	auto inputData = content.substr(crlfcrlf+4);
@@ -242,7 +238,7 @@ void GloveMultipartPart::parseContent(std::string& content)
 	bool append=false;
 	do
 		{
-			crlf = inputMeta.find(CRLF);
+			crlf = inputMeta.find(GloveDef::CRLF);
 			if (crlf == 0)
 				{
 					inputMeta = inputMeta.substr(2);

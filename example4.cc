@@ -63,7 +63,7 @@ void errorh (Glove::Client &client, int client_id, GloveException &e)
 int recibo (Glove::Client &client)
 {
   string recv;
-
+	std::cout << "RECIBO\n";
   client>>Glove::Client::set_read_once(true)>>Glove::Client::set_exception_on_timeout(false)>>recv;
 
   client << "HTTP/1.1 200 OK" << Glove::CRLF << "Content-Type: text/html charset=utf-8" << Glove::CRLF << "Server: ServerTest" << Glove::CRLF << Glove::CRLF << "<html><head><title>Server Test</title></head><body>This is just a test</body></html>"<< Glove::CRLF;
@@ -85,7 +85,7 @@ int recibo (Glove::Client &client)
 int main(int argc, char *argv[])
 {
   Glove g;
-
+	/* Se cuelga cuando intentas conectar sin SSL */
   try
     {
       cout << g.buffer_size(123)<<endl;

@@ -242,9 +242,18 @@ public:
     /** Port  */
     int port;
 
-		std::string servicehost()
+		std::string servicehost(std::string serv="")
 		{
-			return GloveBase::build_uri(service, host, port);
+			if (serv.empty())
+				serv=service;
+			try
+				{
+					return GloveBase::build_uri(serv, host, port);
+				}
+			catch (GloveUriException& e)
+				{
+					return "";
+				}
 		}
     /**
      * DEBUG Only: used to get information about this URI, to print on
@@ -259,10 +268,10 @@ public:
       out+="Host: "+host+"\n";
       out+="Path: "+rawpath+"\n";
       for (auto _pi = path.begin(); _pi != path.end(); ++_pi)
-	out+= "   * "+*_pi+"\n";
+				out+= "   * "+*_pi+"\n";
       out+="Arguments: "+rawarguments+"\n";
       for (auto _pi = arguments.begin(); _pi != arguments.end(); ++_pi)
-	out+= "   * "+_pi->first+" = "+_pi->second+"\n";
+				out+= "   * "+_pi->first+" = "+_pi->second+"\n";
       out+="Service: "+service+" "+((secure)?"(SECURE)":"")+"\n";
       out+="Fragment: "+fragment+"\n";
       out+="Port: "+std::to_string(port)+"\n";
@@ -273,12 +282,12 @@ public:
     }
   };
 
-  /** CRLF string => "\r\n" */
-  static const char* CRLF;
-
-  /** CRLF2 string => "\r\n\r\n" */
-  static const char* CRLF2;
-
+	static const uint16_t LOG_CRITICAL;
+	static const uint16_t LOG_ERROR;
+	static const uint16_t LOG_WARNING;
+	static const uint16_t LOG_NOTICE;
+	static const uint16_t LOG_PROCESS;
+	
   /**
    * Default constructor with the default values:
    *   Timeout = @see GLOVE_DEFAULT_TIMEOUT
@@ -290,7 +299,7 @@ public:
    *   Input filters enabled
    *   Output filters enabled
    */
-  GloveBase(): default_values({GLOVE_DEFAULT_TIMEOUT, EXCEPTION_ALL, false, false, 0, GLOVE_DEFAULT_BUFFER_SIZE, true, true})
+  GloveBase(): default_values({GLOVE_DEFAULT_TIMEOUT, EXCEPTION_ALL, false, false, 0, GLOVE_DEFAULT_BUFFER_SIZE, true, true}), _loggerCallback(nullptr)
   {
   }
 
@@ -301,6 +310,24 @@ public:
   {
   }
 
+		  // get info...
+  /**
+   * Try to guess if the connection is open
+   *
+   * @return true if it is
+   */
+  bool is_connected();
+
+	/**
+	 * Set logger function
+	 */
+	void loggerCallback(std::function<void(uint8_t, uint16_t, std::string message, std::string moreData)> callback)
+	{
+		_loggerCallback = callback;
+	}
+
+	void log(uint8_t type, uint16_t code, std::string message, std::string more);
+	
   static int matchIp(const uint32_t address, const uint32_t network, const uint8_t bits);
   static int matchIp(const std::string address, const std::string cidr, bool notOnlyCIDR=false, bool noException=true);
   /**
@@ -813,6 +840,16 @@ public:
   void disconnect(int how=SHUT_XX);
 
   // other utils
+
+	/**
+	 * Gets service by name
+	 * Asks the system for a service by name, get the service default port
+	 *
+	 * @param name    Service name
+	 * @return service and port
+	 */
+	static uint16_t getServByName(std::string name);
+
   /**
    * Create URI string
    *
@@ -911,7 +948,8 @@ protected:
   std::chrono::time_point<std::chrono::system_clock> start_dtm;
   /** Current connection info  */
   hostinfo connectionInfo;
-
+	std::function<void(uint8_t, uint16_t, std::string message, std::string moreData)> _loggerCallback;
+	
   /**
    * Options for this instance
    */
@@ -1036,6 +1074,8 @@ protected:
 	 */
 	static int inet_pton4(const std::string addr, in_addr* result, bool noException=true);
 
+	static std::map<std::string, uint16_t> _additionalServices;
+
 };
 
 /**
@@ -1054,10 +1094,11 @@ public:
      * Client constructor.
      *
      * @param sockfd    Socket to use
+     * @param clientId  Internal client ID
      * @param ipaddress IP Address of this client
      * @param host      Host
      */
-    Client(Conn_description conn, std::string ipaddress, std::string host)
+    Client(Conn_description conn, unsigned clientId, std::string ipaddress, std::string host):clientId(clientId)
     {
       this->conn = conn;
       this->connectionInfo.ip_address = ipaddress;
@@ -1068,15 +1109,20 @@ public:
      * Client constructor
      *
      * @param sockfd    Socket to use
+     * @param clientId  Internal client ID
      * @param ipaddress IP Address of this client
      * @param host      Host
      * @param options   Default options for this client
      */
-    Client(Conn_description conn, std::string ipaddress, std::string host, local_options options):Client(conn, ipaddress, host)
+    Client(Conn_description conn, unsigned clientId, std::string ipaddress, std::string host, local_options options):Client(conn, clientId, ipaddress, host)
     {
       default_values = options;
     }
 
+		unsigned id() const
+		{
+			return clientId;
+		}
     /**
      * Send data !!
      *
@@ -1101,6 +1147,20 @@ public:
       return _receive_fixed(0, timeout, default_values.timeout_when_data, default_values.buffer_size, read_once, default_values.exceptions & EXCEPTION_TIMEOUT);
     }
 
+  	int receive2 (std::string& out, double timeout=-1, short read_once=-1)
+		{
+			out.clear();
+			try
+				{
+					out = _receive_fixed(0, timeout, default_values.timeout_when_data, default_values.buffer_size, read_once, true);
+				}
+			catch (GloveException& e)
+				{
+					return e.code();
+				}
+			return 0;
+		}
+
     /**
      * Receive a fixed amount of data from this client
      *
@@ -1113,7 +1173,8 @@ public:
     {
       return _receive_fixed(size, timeout, true, default_values.buffer_size, false, default_values.exceptions & EXCEPTION_TIMEOUT);
     }
-
+	private:
+		unsigned clientId;
   };
 
   /**
@@ -1169,6 +1230,8 @@ public:
     {
       CONNECTION_ACCEPTED,
       ACCEPT_ERROR,
+			SSL_CONNECTION_ERROR,
+			SSL_ACCEPT_ERROR,
       /* too many concurrent connections */
       CONNECTION_DENIED_BY_TOO_MANY,
       /* default policy is DENY ALL */
@@ -1751,7 +1814,8 @@ public:
 protected:
   // static timeval as_timeval ( double seconds );
   bool connect_nonblocking ( const sockaddr *saptr, socklen_t salen, const double timeout);
-  void create_worker(client_callback cb);
+  bool create_worker(client_callback cb);
+	bool shutdown_client(Conn_description& client_conn);
   void launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id);
   bool test_connected();
   void fill_connection_info(addrinfo* rp, int port);
@@ -1789,6 +1853,12 @@ protected:
    * and loads certificates. All the dirty work
    */
   void SSLServerInitialize();
+
+  /**
+   * Gets desired SSL client Method to connect a server.
+   * This can be configured later
+   */
+  const SSL_METHOD* getSSLServerMethod();
 
   /**
    * Gets desired SSL client Method to connect a server.

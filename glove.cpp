@@ -16,6 +16,12 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog
+*  20161004 : - minor bugs to free resources when closing unfinished connections
+*           : - getservbyname wrapper with additional services (for now, only ws:// and wss://)
+*           : - remove CRLF constants and use it from GloveDef (global constants for all Glove headers)
+*  20161003 : - fixed bugs when connecting non-ssl when service is SSL
+*  20161002 : - merged SSL server code (I thought it was)
+*           : - SSL disconnection algorithm in loop
 *  20160928 : - get service and host from uri. To automatically get http(s)://host:port/
 *  20160926 : - base64_encode/decode ; urlencode / urldecode moved to GloveCoding namespace
 *  20160919 : - Fixed compilation for GCC >=5.2:
@@ -64,9 +70,7 @@
 *  20140807 : Begin this project
 *
 * To-do:
-*  0 - Use GloveCoding instead of coding functions here.
 *  1 - Match IP for IPv6
-*  1 - SSL shutdown. Context and handler cleanup !!!
 *  2 - epoll support
 *  6 - be able to connect with protocol/service names
 *  7 - set_option(...) allowing a variadic template to set every client or server option
@@ -74,6 +78,7 @@
 *  8 - create GloveHTTP behind GloveHTTPServer and GloveHTTPClient
 *  9 - logger callback
 * 10 - test_connected fussion with is_connected()
+* 11 - GloveBase::getServByPort() must check _additional services
 * 15 - Winsock support (far far in the future)
 *
 * MIT Licensed:
@@ -245,8 +250,20 @@
 /** Calls shutdown()  */
 #define SHUTDOWN(A,B)             ::shutdown((A),(B))
 
-const char* GloveBase::CRLF = "\r\n";
-const char* GloveBase::CRLF2= "\r\n\r\n";
+/* These constants may help developers when handling errors */
+/* Number separation is intended to insert more log types when
+   using other layer services like http, websockets, etc. These
+   services may have CRITICAL or ERROR for this particular layer.*/
+const uint16_t LOG_CRITICAL = 0; /* Live or death errors */
+const uint16_t LOG_ERROR = 20;		 /* Errors*/
+const uint16_t LOG_WARNING = 40;	 /* Warnings*/
+const uint16_t LOG_NOTICE = 60;	 /* Notices*/
+const uint16_t LOG_PROCESS = 80;	 /* Process exaplaining */
+
+std::map<std::string, uint16_t> GloveBase::_additionalServices = {
+	{ "ws",    80  }, 								/* Web Sockets */
+	{ "wss",   443 }									/* Web Sockets (secure)*/
+};
 
 #if ENABLE_OPENSSL
 bool Glove::openSSLInitialized = false;
@@ -270,6 +287,8 @@ enum
     return tv;
   }
 
+	/* std::stod is fast, sprintf is faster, but this is faster
+	   and it's just what i want in some cases. */
   char* __itoa(int val, char* buf)
   {
     int i = 10;
@@ -492,6 +511,33 @@ void GloveBase::getsockopt(int optname, int &val)
   getsockopt(level, optname, &val, &val_len);
 }
 
+void GloveBase::log(uint8_t type, uint16_t code, std::string message, std::string more)
+{
+		if (_loggerCallback == nullptr)
+			return;
+		_loggerCallback(type, code, message, more);	
+}
+
+bool GloveBase::is_connected()
+{
+  char buf;
+
+  int res = RECV(conn.sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+  if (res<0)
+    {
+      // Maybe disconnected or maybe not...
+      if (errno == EAGAIN || errno == EWOULDBLOCK)
+				return true;
+      else
+				throw GloveException(18, append_errno("Socket error"));
+    }
+  else if (res==0)
+    {
+      return false;
+    }
+	return true;
+}
+
 int GloveBase::matchIp(const uint32_t address, const uint32_t network, const uint8_t bits=24)
 {
   /* Some inspiration for IPv6:
@@ -708,29 +754,72 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 #if ENABLE_OPENSSL
       if (!pending_bytes)
 #endif
-      if ( (timeout > 0.0) && ( ( ( error= select(timeout) ) != TCP_OK) ) ) 
-	{
-	  if (error == TCP_TIMEOUT)
-	    {
-	      if ( (!exception_on_timeout) || ( (in.length()>0) && (!timeout_when_data) && (size==0) ) )
-		{
-		  if (_read_once) /* If we return directly we won't apply filters on timeout */
-		    return "";
-		  else
-		    break;
-		}
-	      //		break;	// Sometimes we don't want to return an exception here.
-	      // But, we must have low timeout.
-	      // Not when fixed
-	      else
-		throw GloveException(7, "Timed out while receiving data");
-	    }
-	  else
-	    throw GloveException(8, append_errno("Error while waiting for data: "));
-	}
+				if ( (timeout > 0.0) && ( ( ( error= select(timeout) ) != TCP_OK) ) ) 
+					{
+						if (error == TCP_TIMEOUT)
+							{
+								if ( (!exception_on_timeout) || ( (in.length()>0) && (!timeout_when_data) && (size==0) ) )
+									{
+										if (_read_once) /* If we return directly we won't apply filters on timeout */
+											return "";
+										else
+											break;
+									}
+								//		break;	// Sometimes we don't want to return an exception here.
+								// But, we must have low timeout.
+								// Not when fixed
+								else
+									throw GloveException(7, "Timed out while receiving data");
+							}
+						else
+							throw GloveException(8, append_errno("Error while waiting for data: "));
+					}
       /* Can put this before de do {} */
       int __buffer_size = (size>0)?((requested_size>_buffer_size)?_buffer_size:requested_size):_buffer_size;
       std::string buffer(__buffer_size, '\0');
+			
+/* #if ENABLE_OPENSSL */
+/* 			std::cout << "SSL:"<<conn.secureConnection<<"\n"; */
+/*       if (conn.secureConnection == ENABLE_SSL) */
+/* 				{ */
+/* 					std::cout << "SSL ENABLED\n"; */
+/* 					if (default_values.ssltimeout) */
+/* 						{ */
+/* 							std::timed_mutex sslreadmutex; */
+/* 							sslreadmutex.lock(); */
+/* 							std::thread sslthread([&]() { */
+/* 									bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1); */
+/* 									sslreadmutex.unlock(); */
+/* 								}); */
+/* 							sslthread.detach(); */
+/* #  if defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__ >= 40900 ) */
+/* 							if (!sslreadmutex.try_lock_for(std::chrono::milliseconds((unsigned)(timeout*1000)))) */
+/* 								{ */
+/* #  else */
+/* #    warning "Older GCC version, using workaround to get timed locks" */
+/* 									struct timespec ttout; */
+/* 									clock_gettime(CLOCK_REALTIME, &ttout); */
+/* 									ttout.tv_nsec+= (unsigned)(((long double)timeout-floor(timeout))*1000000000L); */
+/* 									ttout.tv_sec += (time_t)floor(timeout)+ttout.tv_nsec/1000000000L ; */
+/* 									ttout.tv_nsec= ttout.tv_nsec%1000000000L; */
+/* 									int pmt = pthread_mutex_timedlock(sslreadmutex.native_handle(), &ttout); */
+/* 									if (pmt!=0) */
+/* #  endif */
+/* 										{ */
+/* 											pthread_cancel(sslthread.native_handle()); */
+/* 											throw GloveException(40, "Timed out while receiving SSL data"); */
+/* 										} */
+
+/* 										sslreadmutex.unlock(); */
+/* #  if defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__ >= 40900 ) */
+/* 								} */
+/* #  endif */
+/* 						} */
+/* 					else */
+/* 						bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1); */
+/* 				} */
+/* 			else */
+/* #endif */
 #if ENABLE_OPENSSL
       if (conn.secureConnection == ENABLE_SSL)
 	{
@@ -767,43 +856,43 @@ std::string GloveBase::_receive_fixed(const size_t size, double timeout, const b
 		bytes_received = SSL_read(conn.ssl, &buffer[0], buffer.size()-1);
 	}
       else
-#endif
-	bytes_received = RECV (conn.sockfd, &buffer[0], buffer.size(), 0);
+#endif			
+				bytes_received = RECV (conn.sockfd, &buffer[0], buffer.size(), 0);
 
-      if (bytes_received < 0)
-	throw GloveException(9, append_errno("Error receiving data: "));
+					if (bytes_received < 0)
+						throw GloveException(9, append_errno("Error receiving data: "));
 
-      if (bytes_received == 0)
-	{
-	  if (default_values.exceptions & EXCEPTION_DISCONNECTED)
-	    throw GloveException(21, "Peer shutdown");
-	  else
-	    break;
-	}
-      // return in;
+					if (bytes_received == 0)
+						{
+							if (default_values.exceptions & EXCEPTION_DISCONNECTED)
+								throw GloveException(21, "Peer shutdown");
+							else
+								break;
+						}
+					// return in;
 
-      requested_size-=bytes_received;
+					requested_size-=bytes_received;
 
-      in +=buffer.substr(0, bytes_received);
+					in +=buffer.substr(0, bytes_received);
 
-      if (size>0)
-	{
-	  requested_size-=bytes_received;
-	  if (requested_size<=0)
-	    break;
-	}
+					if (size>0)
+						{
+							requested_size-=bytes_received;
+							if (requested_size<=0)
+								break;
+						}
 #if ENABLE_OPENSSL
-      //      pending_bytes = SSL_pending(conn.ssl);
-      if ( (conn.secureConnection == ENABLE_SSL) && (pending_bytes = SSL_pending(conn.ssl)) )
-	{
-	  continue;
-	}
+					//      pending_bytes = SSL_pending(conn.ssl);
+					if ( (conn.secureConnection == ENABLE_SSL) && (pending_bytes = SSL_pending(conn.ssl)) )
+						{
+							continue;
+						}
 #endif
-    }
-    while ( (requested_size > 0) && (!read_once) );
+				}
+			while ( (requested_size > 0) && (!read_once) );
 
-  return run_filters(FILTER_INPUT, in);
-}
+			return run_filters(FILTER_INPUT, in);
+		}
 
   void GloveBase::add_filter(GloveBase::filter_type type, std::string name, GloveBase::filter_callback filter, std::string option, std::string value)
 {
@@ -896,40 +985,40 @@ std::string GloveBase::user_and_pass(const std::string& user, const std::string 
   return res;
 }
 
-std::string GloveBase::build_uri (const std::string &service, const std::string &host, int port, const std::string &username, const std::string &password)
-{
-  std::string res = std::string();
-  // Only tcp at this moment
-  if (service!="")
-    {
-      servent *srv = getservbyname(service.c_str(), "tcp");
-      if (srv == NULL)
-	throw GloveUriException(1001, "Could'nt find service");
+ std::string GloveBase::build_uri (const std::string &service, const std::string &host, int port, const std::string &username, const std::string &password)
+ {
+	 std::string res = std::string();
+	 // Only tcp at this moment
+	 if (!service.empty())
+		 {
+			 uint16_t defport = getServByName(service);
+			 if (!defport)
+				 throw GloveUriException(1001, "Could'nt find service");
 
-      res=srv->s_name + std::string("://")+user_and_pass(username, password)+host;
+			 res=service + std::string("://")+user_and_pass(username, password)+host;
 
-      if ( port > 65535 )
-	throw GloveUriException(1002, "Port must be lower than 65536");
+			 if ( port > 65535 )
+				 throw GloveUriException(1002, "Port must be lower than 65536");
 
-      if ( (port != 0) && (htons(srv->s_port) != port) )
-	res+=":"+std::to_string(port);
-    }
-  else
-    {
-      if (port == 0)
-	throw GloveUriException(1003, "Bad service or port data");
-      else if ( port > 65535 )
-	throw GloveUriException(1002, "Port must be lower than 65536");
+			 if ( (port != 0) && (defport != port) )
+				 res+=":"+std::to_string(port);
+		 }
+	 else
+		 {
+			 if (port == 0)
+				 throw GloveUriException(1003, "Bad service or port data");
+			 else if ( port > 65535 )
+				 throw GloveUriException(1002, "Port must be lower than 65536");
 
-      std::string servName = getServByPort(port);
-      if (servName.empty())
-	throw GloveUriException(1004, "Could'nt find service port");
+			 std::string servName = getServByPort(port);
+			 if (servName.empty())
+				 throw GloveUriException(1004, "Could'nt find service port");
 
-      res=servName + std::string("://")+user_and_pass(username, password)+host;
-    }
+			 res=servName + std::string("://")+user_and_pass(username, password)+host;
+		 }
 
-  return res;
-}
+	 return res;
+ }
 
 std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string& rawArguments, std::string& fragment, bool urldecode)
 {
@@ -1020,94 +1109,94 @@ std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string&
 }
 
 // Ladies and gentlemen, the unmaintainable !
-GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool urldecode, bool resolve, std::string service_separator)
-{
-  // This may be easily done with regex's but my gcc 4.7 is a bit buggy with that
-  // or even going through iterators instead of using find and its brothers all the time
-  // I hope I have time soon to fix it
-  uri _uri;
-  std::string _uristring = uristring;
-  if (service_separator == "")
-    service_separator = "://";
+ GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool urldecode, bool resolve, std::string service_separator)
+ {
+	 // This may be easily done with regex's but my gcc 4.7 is a bit buggy with that
+	 // or even going through iterators instead of using find and its brothers all the time
+	 // I hope I have time soon to fix it
+	 uri _uri;
+	 std::string _uristring = uristring;
+	 if (service_separator == "")
+		 service_separator = "://";
 
-  _uri.uri = uristring;
+	 _uri.uri = uristring;
 
-  auto _space = uristring.find(service_separator);
+	 auto _space = uristring.find(service_separator);
 
-  if (_space == std::string::npos)
-    throw GloveUriException(1005, "Can't find service separator '"+service_separator+"' in provided URI ('"+uristring+"')");
+	 if (_space == std::string::npos)
+		 throw GloveUriException(1005, "Can't find service separator '"+service_separator+"' in provided URI ('"+uristring+"')");
 
-  _uristring = uristring.substr(_space+service_separator.length());
-  _uri.service=uristring.substr(0, _space);
-  _uri.secure= (Glove::detectSecureService(_uri.service) == ENABLE_SSL);
+	 _uristring = uristring.substr(_space+service_separator.length());
+	 _uri.service=uristring.substr(0, _space);
+	 _uri.secure= (Glove::detectSecureService(_uri.service) == ENABLE_SSL);
 
-  auto _atsign = _uristring.find_first_of('@');
-  if (_atsign != std::string::npos)
-    {
-      auto colon = _uristring.find_first_of(':'); 
-      if (colon != std::string::npos)
-	{
-	  _uri.username = _uristring.substr(0, colon);
-	  _uri.password = _uristring.substr(colon+1, _atsign-colon-1);
-	}
-      else
-	{
-	  _uri.username = _uristring.substr(0, _atsign);
-	}
-      _uristring = _uristring.substr(_atsign+1);
-    }
-  auto _slash = _uristring.find_first_of('/');
-  std::string::size_type start = -1;
-  do
-    {
-      if (_slash == std::string::npos)
-	_slash = _uristring.length();
+	 auto _atsign = _uristring.find_first_of('@');
+	 if (_atsign != std::string::npos)
+		 {
+			 auto colon = _uristring.find_first_of(':'); 
+			 if (colon != std::string::npos)
+				 {
+					 _uri.username = _uristring.substr(0, colon);
+					 _uri.password = _uristring.substr(colon+1, _atsign-colon-1);
+				 }
+			 else
+				 {
+					 _uri.username = _uristring.substr(0, _atsign);
+				 }
+			 _uristring = _uristring.substr(_atsign+1);
+		 }
+	 auto _slash = _uristring.find_first_of('/');
+	 std::string::size_type start = -1;
+	 do
+		 {
+			 if (_slash == std::string::npos)
+				 _slash = _uristring.length();
 
-      std::string temp = _uristring.substr(start+1, _slash-start-1);
-      if (start == -1)
-	{
-	  // Host have port ?
-	  auto _portcolon = temp.find(':');
-	  if (_portcolon != std::string::npos)
-	    {
-	      _uri.host = temp.substr(0, _portcolon);
-	      try
-		{
-		  _uri.port = std::stoi(temp.substr(_portcolon+1));
-		} 
-	      catch (std::invalid_argument)
-		{
-		  throw GloveUriException(1006, "Invalid port: "+temp.substr(_portcolon+1));
-		}
-	      if ( (_uri.port<1) || (_uri.port>56635) )
-		throw GloveUriException(1007, "Invalid port: "+std::to_string(_uri.port));
-	    }
-	  else
-	    {
-	      _uri.port = 0;
-	      servent *srv = getservbyname(_uri.service.c_str(), "tcp");
-	      if (srv != NULL)
-		_uri.port = htons(srv->s_port);
+			 std::string temp = _uristring.substr(start+1, _slash-start-1);
+			 if (start == -1)
+				 {
+					 // Host have port ?
+					 auto _portcolon = temp.find(':');
+					 if (_portcolon != std::string::npos)
+						 {
+							 _uri.host = temp.substr(0, _portcolon);
+							 try
+								 {
+									 _uri.port = std::stoi(temp.substr(_portcolon+1));
+								 } 
+							 catch (std::invalid_argument)
+								 {
+									 throw GloveUriException(1006, "Invalid port: "+temp.substr(_portcolon+1));
+								 }
+							 if ( (_uri.port<1) || (_uri.port>56635) )
+								 throw GloveUriException(1007, "Invalid port: "+std::to_string(_uri.port));
+						 }
+					 else
+						 {
+							 _uri.port = 0;
+							 auto __port = getServByName(_uri.service);
+							 if (__port)
+								 _uri.port = __port;
 
-	      _uri.host = temp;
-	    }
-	  _uri.rawpath = _uristring.substr(_slash);
-	}
-      else if (start+1 != _slash)
-	_uri.path.push_back((urldecode)?GloveCoding::urldecode(temp):temp);
-      if ( (_uristring[_slash] == '?') || (_uristring[_slash] == '#') )
-	{
-	  _uri.rawarguments = _uristring.substr(_slash+1);
-	  _uri.arguments = extract_uri_arguments(_uri.rawarguments, _uri.fragment, urldecode);
-	  break;
-	}
+							 _uri.host = temp;
+						 }
+					 _uri.rawpath = _uristring.substr(_slash);
+				 }
+			 else if (start+1 != _slash)
+				 _uri.path.push_back((urldecode)?GloveCoding::urldecode(temp):temp);
+			 if ( (_uristring[_slash] == '?') || (_uristring[_slash] == '#') )
+				 {
+					 _uri.rawarguments = _uristring.substr(_slash+1);
+					 _uri.arguments = extract_uri_arguments(_uri.rawarguments, _uri.fragment, urldecode);
+					 break;
+				 }
 
-      start = _slash;
+			 start = _slash;
 
-    } while (_slash = _uristring.find_first_of("/?#", _slash+1), start != _uristring.length() );
+		 } while (_slash = _uristring.find_first_of("/?#", _slash+1), start != _uristring.length() );
 
-  return _uri;
-}
+	 return _uri;
+ }
 
 // ------------- tools ---------------
 std::string GloveBase::getServByPort(int port)
@@ -1118,8 +1207,23 @@ std::string GloveBase::getServByPort(int port)
       return srv->s_name;
     }
 
+	/* Test additional services? Maybe one day in the future */
   return "";
 }
+
+uint16_t GloveBase::getServByName(std::string name)
+{
+	servent *srv = getservbyname(name.c_str(), "tcp");
+	if (srv == NULL)
+		{
+			/* We must test some additional services */
+			auto has = _additionalServices.find(name);
+			return (has != _additionalServices.end())?has->second:0;
+		}
+	else
+		return htons(srv->s_port);
+}
+
 
 // Glove::Glove(): connected(false), _shutdown_on_destroy(false), _resolve_hostnames(false), thread_clients(true), thread_server(true), server_reuseaddr(true), max_accepted_clients(2), _server_error_callback(NULL), accept_clients(false), clientId(0)
 Glove::Glove(): connected(false), _shutdown_on_destroy(false), server_options({false, true, true, true, GLOVE_DEFAULT_MAX_CLIENTS, GLOVE_DEFAULT_ACCEPT_WAIT, true, true, false, 0, 1}), _server_error_callback(NULL), accept_clients(false), clientId(0)
@@ -1200,83 +1304,83 @@ void Glove::fill_connection_info(addrinfo *rp, int port)
   connectionInfo.ip_address = ipaddress;
 }
 
-void Glove::connect(const std :: string & host, const int port, double timeout, int domain, int secure)
-{
-  addrinfo address;
-  int error;
-  addrinfo *servinfo, *rp;
-  char _port[12] = {0};
+ void Glove::connect(const std :: string & host, const int port, double timeout, int domain, int secure)
+ {
+	 addrinfo address;
+	 int error;
+	 addrinfo *servinfo, *rp;
+	 char _port[12] = {0};
 
-  if (timeout ==-1)
-    timeout = default_values.timeout;
+	 if (timeout ==-1)
+		 timeout = default_values.timeout;
 
-  memset(&address, 0, sizeof(addrinfo));
+	 memset(&address, 0, sizeof(addrinfo));
 
-  address.ai_family = domain;
-  address.ai_socktype = SOCK_STREAM;
-  address.ai_flags = AI_PASSIVE;
+	 address.ai_family = domain;
+	 address.ai_socktype = SOCK_STREAM;
+	 address.ai_flags = AI_PASSIVE;
 
-  error = getaddrinfo ( host.c_str(), __itoa(port, _port), &address, &servinfo);
-  if ( error != 0)
-    throw GloveException(1, append_errno("Failed to resolve: "));
+	 error = getaddrinfo ( host.c_str(), __itoa(port, _port), &address, &servinfo);
+	 if ( error != 0)
+		 throw GloveException(1, append_errno("Failed to resolve: "));
 
-  this->connected = false;
-  // try to connect the server 
-  for (rp = servinfo; rp != NULL && this->connected==false; rp = rp->ai_next) 
-    {
-      conn.sockfd = SOCKET (rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+	 this->connected = false;
+	 // try to connect the server 
+	 for (rp = servinfo; rp != NULL && this->connected==false; rp = rp->ai_next) 
+		 {
+			 conn.sockfd = SOCKET (rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 
-      if (conn.sockfd == -1 )
-	continue;
+			 if (conn.sockfd == -1 )
+				 continue;
 
-      if (timeout==0)
-	{
-	  if (CONNECT(conn.sockfd, rp->ai_addr, rp->ai_addrlen) == 0) 
-	    this->connected = true;
-	}
-      else
-	{
-	  if ( connect_nonblocking ( rp->ai_addr, rp->ai_addrlen, timeout) ) 
-	    this->connected = true;
-	}
+			 if (timeout==0)
+				 {
+					 if (CONNECT(conn.sockfd, rp->ai_addr, rp->ai_addrlen) == 0) 
+						 this->connected = true;
+				 }
+			 else
+				 {
+					 if ( connect_nonblocking ( rp->ai_addr, rp->ai_addrlen, timeout) ) 
+						 this->connected = true;
+				 }
 
-      if (this->connected)
-	fill_connection_info(rp, port);
-      else 
-	CLOSE(conn.sockfd);
-    }
+			 if (this->connected)
+				 fill_connection_info(rp, port);
+			 else 
+				 CLOSE(conn.sockfd);
+		 }
 
-  if (conn.sockfd == -1)
-    throw GloveException(11, append_errno("Cannot create socket: "));
+	 if (conn.sockfd == -1)
+		 throw GloveException(11, append_errno("Cannot create socket: "));
 
-  if (!this->connected)
-    throw GloveException(4, append_errno("Cannot connect to the server: "));
+	 if (!this->connected)
+		 throw GloveException(4, append_errno("Cannot connect to the server: "));
 
-  freeaddrinfo ( servinfo );
+	 freeaddrinfo ( servinfo );
 
-  /* Give an initial value for this */
-  conn.secureConnection = DISABLE_SSL;
-  /* SSL connection */
+	 /* Give an initial value for this */
+	 conn.secureConnection = DISABLE_SSL;
+	 /* SSL connection */
 # if ENABLE_OPENSSL
-  if (secure == AUTODETECT_SSL)
-    secure = detectSecureService(connectionInfo.service);
+	 if (secure == AUTODETECT_SSL)
+		 secure = detectSecureService(connectionInfo.service);
 
-  if (secure == ENABLE_SSL)
-    {
-      bool hndshk = SSLClientHandshake();
-      if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CIPHER_INFO) )
-	SSLGetCipherInfo();
+	 if (secure == ENABLE_SSL)
+		 {
+			 bool hndshk = SSLClientHandshake();
+			 if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CIPHER_INFO) )
+				 SSLGetCipherInfo();
 
-      if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CERT_INFO) )
-	SSLGetCertificatesInfo();
-    }
+			 if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CERT_INFO) )
+				 SSLGetCertificatesInfo();
+		 }
 # endif
-  errno = 0;			// clear remaining connect_nonblocking error
-}
+	 errno = 0;			// clear remaining connect_nonblocking error
+ }
 
-void Glove::connect(GloveBase::uri uri, double timeout, int domain, int secure)
-{
-  if (secure == AUTODETECT_SSL)
+ void Glove::connect(GloveBase::uri uri, double timeout, int domain, int secure)
+ {
+	 if (secure == AUTODETECT_SSL)
     secure = (uri.secure)?ENABLE_SSL:DISABLE_SSL;
 
   connect(uri.host, uri.port, timeout, domain, secure);
@@ -1319,7 +1423,7 @@ void Glove::SSLServerInitialize()
 
   /* We can try SSLv23_server_method() to try several 
    methods, starting from the more secure*/
-  conn.ctx = SSL_CTX_new(getSSLClientMethod());
+  conn.ctx = SSL_CTX_new(getSSLServerMethod());
   if (conn.ctx == NULL)
     throw GloveException(22, "Couldn't create SSL context");
 
@@ -1387,7 +1491,22 @@ bool Glove::SSLClientHandshake(bool exception_on_handshake_failure)
   return true;
 }
 
-const SSL_METHOD* Glove::getSSLClientMethod()
+const SSL_METHOD* Glove::getSSLServerMethod()
+{
+  switch (ssl_options.ssl_method)
+    {
+    case SSLv23 : return SSLv23_server_method();
+    case SSLv3  : return SSLv3_server_method();
+    case TLSv1  : return TLSv1_server_method();
+    case TLSv1_1: return TLSv1_1_server_method();
+    case TLSv1_2: return TLSv1_2_server_method();
+    case DTLSv1 : return DTLSv1_server_method();
+		default:
+			throw GloveException(41, "SSL method not specified");
+    }
+}
+
+ const SSL_METHOD* Glove::getSSLClientMethod()
 {
   switch (ssl_options.ssl_method)
     {
@@ -1397,6 +1516,8 @@ const SSL_METHOD* Glove::getSSLClientMethod()
     case TLSv1_1: return TLSv1_1_client_method();
     case TLSv1_2: return TLSv1_2_client_method();
     case DTLSv1 : return DTLSv1_client_method();
+		default:
+			throw GloveException(41, "SSL method not specified");
     }
 }
 
@@ -1479,7 +1600,7 @@ std::string Glove::getSSLVersion()
   if (conn.secureConnection == DISABLE_SSL)
     return "";
   if (!conn.cipher_info_present)
-    SSLGetCipherInfo();
+			SSLGetCipherInfo();
 
   return conn.ssl_version;
 }
@@ -1693,22 +1814,8 @@ bool Glove::is_connected()
   if (!connected)
     return false;
 
-  int res = RECV(conn.sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
-  if (res<0)
-    {
-      // Maybe disconnected or maybe not...
-      if (errno == EAGAIN || errno == EWOULDBLOCK)
-	return true;
-      else
-	throw GloveException(18, append_errno("Socket error"));
-    }
-  else if (res==0)
-    {
-      connected = false;
-      return false;
-    }
-  // We can do it better
-  return connected;
+	connected = GloveBase::is_connected();
+	return connected;
 }
 
 std::string Glove::getUnspecified(int domain)
@@ -1746,8 +1853,11 @@ void Glove::listen(const int port, client_callback cb, std::string bind_ip, cons
     {
       /* Finally secure connection! */
       SSLServerInitialize();
+			conn.cipher_info_present = false;
+			conn.certificates_info_present = false;			
       conn.secureConnection = ENABLE_SSL;
     }
+
 #endif
   conn.sockfd = SOCKET(domain, SOCK_STREAM, 0);
   if (conn.sockfd == -1)
@@ -1804,6 +1914,7 @@ void Glove::serverRejectConnection()
   memset(&client, 0, client_len);
 
   client_conn.sockfd = ACCEPT (conn.sockfd, (struct sockaddr *)&client, &client_len);
+
   if (client_conn.sockfd<0)
     {
       logConnection("", "", ACCEPT_ERROR);
@@ -1820,7 +1931,7 @@ void Glove::serverRejectConnection()
   if (tmcRejectCb)
     {
       Client *c;
-      c = (server_options.copy_options)?new Client(client_conn, ipaddress, "", default_values):new Client(client_conn, ipaddress, "");
+      c = (server_options.copy_options)?new Client(client_conn, 0, ipaddress, "", default_values):new Client(client_conn, 0, ipaddress, "");
       c->send(tmcRejectCb(c));
       delete c;
     }
@@ -1829,142 +1940,206 @@ void Glove::serverRejectConnection()
 
 }
 
-void Glove::create_worker(Glove::client_callback cb)
-{
-  sockaddr_in client;
-  socklen_t client_len = sizeof(client);
-  memset(&client, 0, client_len);
+ bool Glove::create_worker(Glove::client_callback cb)
+ {
+	 sockaddr_in client;
+	 socklen_t client_len = sizeof(sockaddr_in);
+	 memset(&client, 0, client_len);
 
-  if (getTotalConnectedClients()>=server_options.max_accepted_clients)
-    {
-      int selectResult = select(1, SELECT_READ);
-      if (selectResult==TCP_OK)
-	{
-	  /* Detect if there is an incomming connection here,
-	     if so. Accept it and close it inmediately to 
-	     deny access if it's configured to do so. */
-	  if (server_options.reject_connections)
-	    {
-	      double totalTime=0;
-	      while ( (totalTime<server_options.wait_before_reject_connection) && (getTotalConnectedClients()>=server_options.max_accepted_clients) )
-		{
-		  totalTime+=0.1;
-		  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-		}
-	      if (getTotalConnectedClients()>=server_options.max_accepted_clients)
-		{
-		  /* If after waiting we still have a lot of connections, reject connection */
-		  serverRejectConnection();
-		  return;
-		}
-	    }
-	  else
-	    {
-	      /* Sleep a little bit to prevent high CPU load. Just wait for client to timeout */
-	      std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
-	      return;
-	    }
-	}
-      else
-	{
-	  std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
-	  return;
-	}
-    }
-  Conn_description client_conn;
-  client_conn.sockfd = ACCEPT (conn.sockfd, (struct sockaddr *)&client, &client_len);
-  if (client_conn.sockfd<0)
-    {
-      logConnection("", "", ACCEPT_ERROR);
-      // Error!! But not big enough to throw an exception
-      return;
-    }
+	 if (getTotalConnectedClients()>=server_options.max_accepted_clients)
+		 {
+			 int selectResult = select(1, SELECT_READ);
+			 if (selectResult==TCP_OK)
+				 {
+					 /* Detect if there is an incomming connection here,
+							if so. Accept it and close it inmediately to 
+							deny access if it's configured to do so. */
+					 if (server_options.reject_connections)
+						 {
+							 double totalTime=0;
+							 while ( (totalTime<server_options.wait_before_reject_connection) && (getTotalConnectedClients()>=server_options.max_accepted_clients) )
+								 {
+									 totalTime+=0.1;
+									 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+								 }
+							 if (getTotalConnectedClients()>=server_options.max_accepted_clients)
+								 {
+									 /* If after waiting we still have a lot of connections, reject connection */
+									 serverRejectConnection();
+									 return false;
+								 }
+						 }
+					 else
+						 {
+							 /* Sleep a little bit to prevent high CPU load. Just wait for client to timeout */
+							 std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
+							 return false;
+						 }
+				 }
+			 else
+				 {
+					 std::this_thread::sleep_for(std::chrono::milliseconds(server_options.accept_wait));
+					 return false;
+				 }
+		 }
+	 Conn_description client_conn;
+	 /* Disable SSL temporary, before initializing client */
+	 client_conn.secureConnection=DISABLE_SSL;
 
-  std::string hostname, ipaddress;
-  if (server_options.resolve_hostnames)
-    {
-      char _hostname[NI_MAXHOST];
+	 client_conn.sockfd = ACCEPT (conn.sockfd, (struct sockaddr *)&client, &client_len);
+	 if (client_conn.sockfd<0)
+		 {
+			 logConnection("", "", ACCEPT_ERROR);
+			 // Error!! But not big enough to throw an exception
+			 /* No need to shutdown client. invalid socket */
+			 return false;
+		 }
 
-      int error = getnameinfo((sockaddr*) &client, client_len, _hostname, NI_MAXHOST, NULL, 0, 0); 
-      if (error == 0)
-	  hostname=_hostname;	// Do not throw exception. It can cause the server to close
-    }
+	 std::string hostname, ipaddress;
+	 if (server_options.resolve_hostnames)
+	 	 {
+	 		 char _hostname[NI_MAXHOST];
 
-  char _ipaddress[INET_ADDRSTRLEN];
+	 		 int error = getnameinfo((sockaddr*) &client, client_len, _hostname, NI_MAXHOST, NULL, 0, 0);
+	 		 if (error == 0)
+	 			 hostname=_hostname;	// Do not throw exception. It can cause the server to close
+	 	 }
 
-  if ( inet_ntop(AF_INET,  &(client.sin_addr), _ipaddress, INET_ADDRSTRLEN) != NULL)
-    ipaddress=_ipaddress;
+	 char _ipaddress[INET_ADDRSTRLEN];
 
-  uint8_t accepted=server_options.default_conn_policy;
-  bool logged = false;
-  for (auto f : connection_filters)
-    {
-      auto fi = f.second;
-      auto res = fi.cb(this, ipaddress, hostname, client.sin_port, fi.data0, fi.data1, fi.data2, fi.data3);
-      if (res<0)
-	{
-	  accepted = 0;
-	  logged = true;
-	  logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_FILTER, f.first);
-	}
-      else if (res>0)
-	accepted = 1;
-      /* Nothing to do if res == 0 */
-    }
-  if (accepted==0)
-    {
-      close(client_conn.sockfd);
-      if (!logged)
-	logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_POLICY);
-      /* Connection not accepted by filters */
-      return; 
-    }
-  logConnection(ipaddress, hostname, CONNECTION_ACCEPTED);
-  Client *c;
-  if (server_options.copy_options)
-    c = new Client(client_conn, ipaddress, hostname, default_values);
-  else
-    c = new Client(client_conn, ipaddress, hostname);
+	 if ( inet_ntop(AF_INET,  &(client.sin_addr), _ipaddress, INET_ADDRSTRLEN) != NULL)
+	 	 ipaddress=_ipaddress;
 
-  clients_connected_mutex.lock();
-  unsigned thisClient = clientId++;
-  clients_connected.insert(std::pair<int, Client*>(thisClient, c));
-  clients_connected_mutex.unlock();
+	 uint8_t accepted=server_options.default_conn_policy;
+	 bool logged = false;
+	 for (auto f : connection_filters)
+	 	 {
+	 		 auto fi = f.second;
+	 		 auto res = fi.cb(this, ipaddress, hostname, client.sin_port, fi.data0, fi.data1, fi.data2, fi.data3);
+	 		 if (res<0)
+	 			 {
+	 				 accepted = 0;
+	 				 logged = true;
+	 				 logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_FILTER, f.first);
+	 			 }
+	 		 else if (res>0)
+	 			 accepted = 1;
+	 		 /* Nothing to do if res == 0 */
+	 	 }
+	 if (accepted==0)
+	 	 {
+	 		 close(client_conn.sockfd);
+	 		 if (!logged)
+	 			 logConnection(ipaddress, hostname, CONNECTION_DENIED_BY_POLICY);
+	 		 /* Connection not accepted by filters */
+	 		 return shutdown_client(client_conn);
+	 	 }
+#if ENABLE_OPENSSL
 
-  // debug clients
-  // for (auto i = clients_connected.begin(); i != clients_connected.end(); i++) {
-  //   std::cout << "CLIENT ID: *"<<i->first<<"*"<<std::endl;
-  // }
-  if (server_options.thread_clients)
-    {
-      std::thread (
+	 if (conn.secureConnection== ENABLE_SSL)
+		 {
+			 /*  */
+			 client_conn.ctx = conn.ctx;
+			 client_conn.ssl = SSL_new(client_conn.ctx);
+
+			 if (client_conn.ssl ==NULL)
+				 {
+					 logConnection(ipaddress, hostname, SSL_CONNECTION_ERROR);
+					 return shutdown_client(client_conn);
+				 }
+			 /* At this point, if we have an error, must SHUT DOWN SSL
+				in the client. */
+			 client_conn.secureConnection = conn.secureConnection;
+
+			 if (SSL_set_fd(client_conn.ssl, client_conn.sockfd) == 0)
+				 {
+					 logConnection(ipaddress, hostname, SSL_CONNECTION_ERROR);
+					 return shutdown_client(client_conn);
+				 }
+
+			 if (SSL_accept(client_conn.ssl) < 1)
+			 	 {
+			 		 logConnection(ipaddress, hostname, SSL_ACCEPT_ERROR);
+			 		 return shutdown_client(client_conn);
+			 	 }
+		 }
+#endif
+	 logConnection(ipaddress, hostname, CONNECTION_ACCEPTED);
+
+	 Client *c;
+	 clients_connected_mutex.lock();
+	 unsigned thisClient = clientId++;
+	 if (server_options.copy_options)
+		 c = new Client(client_conn, thisClient, ipaddress, hostname, default_values);
+	 else
+		 c = new Client(client_conn, thisClient, ipaddress, hostname);
+
+	 c->loggerCallback(_loggerCallback); /* Inherit logger callback*/
+
+	 clients_connected.insert(std::pair<int, Client*>(thisClient, c));
+	 clients_connected_mutex.unlock();
+
+	 // debug clients
+	 // for (auto i = clients_connected.begin(); i != clients_connected.end(); i++) {
+	 //   std::cout << "CLIENT ID: *"<<i->first<<"*"<<std::endl;
+	 // }
+	 if (server_options.thread_clients)
+		 {
+			 std::thread (
 		   &Glove::launch_client, this, cb, c, client_conn, thisClient
 		   ).detach();
-    }
-  else
-    {
-      launch_client(cb, c, client_conn, thisClient);
-    }
-}
+		 }
+	 else
+		 {
+			 launch_client(cb, c, client_conn, thisClient);
+		 }
+	 return true;
+ }
 
-void Glove::launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id)
-{
-  try
-    {
-      cb (*c);
-    }
-  catch (GloveException &e)
-    {
-      if (_server_error_callback)
-	_server_error_callback(*c, client_id, e);
-    }
+ bool Glove::shutdown_client(Conn_description& client_conn)
+ {
+#if ENABLE_OPENSSL
+	 if (client_conn.secureConnection == ENABLE_SSL)
+		 {
+			 /* openSSL is a bit tricky closing connections.
+					Call SSL_shutdown() once to send a shutdown message and
+					wait for the other part to allow you to disconnect. */
+			 /* Let's wait in intervals of 0.01s, if an error comes
+					SSL_shutdow()<0 or a success SSL_shutdown()=1, exit.
+			 */
+			 /* If there's an error, we will close drastically the connection
+					with CLOSE(), if not, the connection will be successfully closed*/
+			 int sdr = SSL_shutdown(client_conn.ssl);
+			 int times=0;
+			 while ( (sdr==0) && (times++<10) )
+				 {
+					 select(client_conn.sockfd, 0.01);
+					 sdr = SSL_shutdown(client_conn.ssl);
+				 }
+			 SSL_free(client_conn.ssl);
+		 }
+#endif
+	 CLOSE(client_conn.sockfd);
+ }
 
-  CLOSE(client_conn.sockfd);
-  clients_connected_mutex.lock();
-  clients_connected.erase( clients_connected.find(client_id) );
-  clients_connected_mutex.unlock();
-  delete c;
-}
+ void Glove::launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id)
+ {
+	 try
+		 {
+			 cb (*c);
+		 }
+	 catch (GloveException &e)
+		 {
+			 if (_server_error_callback)
+				 _server_error_callback(*c, client_id, e);
+		 }
+	 
+	 shutdown_client(client_conn);
+	 clients_connected_mutex.lock();
+	 clients_connected.erase( clients_connected.find(client_id) );
+	 clients_connected_mutex.unlock();
+	 delete c;
+ }
 
 std::string Glove::debugLoggedConnections()
 {

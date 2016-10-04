@@ -5,17 +5,28 @@
 #define _GLOVEHTTPSERVER_H 1
 
 #include "glove.hpp"
+#include "utils.hpp"
 #include "glovehttpcommon.hpp"
 #include <string>
 #include <vector>
 #include <sstream>
+#include <functional>
+#include "glovewebsockets.hpp"
 
 /** Glove Http Server Version (numeric)  */
-#define GHS_VERSION 0001005
+#define GHS_VERSION 0003001
 /** Glove Http Server Version (string)  */
-#define GHS_VERSION_STR "0.1.5"
+#define GHS_VERSION_STR "0.3.1"
 
 #define GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT 5
+
+/**
+ * By default enable openssl. This compiles glove with SSL support
+ * More complex but we can make a secure connection transparently
+ */
+#ifndef ENABLE_COMPRESSION
+#   define ENABLE_COMPRESSION 1
+#endif
 
 class GloveHttpServer;
 
@@ -23,7 +34,7 @@ class GloveHttpServer;
 /** Glove Http Request  */
 class GloveHttpRequest
 {
- public:
+public:
   /**
    * A Http Request has been generated
    *
@@ -45,13 +56,14 @@ class GloveHttpRequest
   std::string getMethod() const;
   std::string getLocation() const;
   std::string getRawLocation() const;
-  std::string getData() const;
+  std::string& getData() const;
   std::string getData(std::string el, bool exact=true) const;
   std::vector<std::pair<std::string, std::string> > getDataCol(std::string el, bool exact=true) const;
   std::string getContentType() const;
   std::string getEncoding() const;
-  std::map<std::string, std::string> getHeaders() const;
+  std::map<std::string, std::string>& getHeaders() const;
   std::string getHeader(std::string h) const;
+	bool connectionIs(std::string what);
   std::string getVhost();
   GloveBase::uri getUri() const;
   
@@ -62,9 +74,20 @@ class GloveHttpRequest
 
   std::string getMessage(std::string _template);
 
+	std::string extra(std::string key)
+	{
+		return gloveData[key];
+	}
+	
+	std::string extra(std::string key, std::string value)
+	{
+		gloveData[key] = value;
+		return value;
+	}
+	
   /* Special arguments */
   std::map<std::string, std::string> special;
- private:
+private:
   GloveHttpServer* srv;
   Glove::Client *c;
   GloveBase::uri uri;
@@ -74,6 +97,8 @@ class GloveHttpRequest
   std::string method;
   std::string raw_location, location;
   std::string data;
+	std::vector<std::string> connectionHeader;
+	std::map<std::string, std::string> gloveData;
   std::map<std::string, std::string> headers;
   std::map<std::string, std::string> urlencoded_data;
   void parseContentType(const std::string& method);
@@ -92,29 +117,30 @@ namespace
 /** Glove Http Response  */
 class GloveHttpResponse
 {
- public:
+public:
   GloveHttpResponse(std::string contentType);
   ~GloveHttpResponse();
 
   void clear();
   void send(GloveHttpRequest &request, Glove::Client &client);
+	int applyCompression(GloveHttpRequest &request, std::vector<std::string>& compression);
   short file(std::string filename, bool addheaders=true, std::string contentType="");
   short code(short rc=0);
   std::string contentType(std::string newContentType);
   std::string contentType();
 
   inline std::string responseMessage()
-    {
-      return GloveHttpResponseCode::responseMessage(_responseCode);
-    }
+	{
+		return GloveHttpResponseCode::responseMessage(_responseCode);
+	}
 
   template <typename T>
   GloveHttpResponse& operator<<(const T& x)
-    {
-      output << x;
+	{
+		output << x;
 
-      return *this;
-    }
+		return *this;
+	}
 
   /* Support for endl ostream manipulator */
   GloveHttpResponse& operator<<(ostream_manipulator manip)
@@ -122,6 +148,10 @@ class GloveHttpResponse
     output<<manip;
     return *this;
   }
+
+	std::string header(std::string name);
+	std::string header(std::string name, std::string value);
+	bool hasHeader(std::string name);
 
   /* Some more manipulators */
 
@@ -141,7 +171,7 @@ class GloveHttpResponse
   struct setCode : public GloveHttpResponseManipulator<short>
   {
   public:
-  setCode(short val):GloveHttpResponseManipulator(val)
+		setCode(short val):GloveHttpResponseManipulator(val)
     {
     }
 
@@ -160,7 +190,7 @@ class GloveHttpResponse
   struct setContentType : public GloveHttpResponseManipulator<std::string>
   {
   public:
-  setContentType(std::string val):GloveHttpResponseManipulator(val)
+		setContentType(std::string val):GloveHttpResponseManipulator(val)
     {
     }
 
@@ -191,7 +221,7 @@ class GloveHttpResponse
   {
     for (auto x : keyvalmap)
       {
-	this->responseVars[x.first] = x.second;
+				this->responseVars[x.first] = x.second;
       }
     return "";
   }
@@ -209,33 +239,137 @@ class GloveHttpResponse
 
   /* Response templates */
   static const std::string defaultResponseTemplate;
- private:
+private:
   bool _disableProcessor=false;
   std::stringstream output;
   short _responseCode;
   std::string _contentType;
-
+	bool compression;
+	
+	std::string getFinalOutput(std::vector<std::string>& compression,
+														 std::map<std::string, std::string>& headers);
+	bool compressionPossible(std::map<std::string, std::string>& headers, std::string& compressionMethod);
   /* You can use this key-value storage to pass data between through responses/templates or
      even response processors. */
   std::map<std::string, std::string> responseVars;
+	std::map<std::string, std::string> headers;
   std::string getHeaderVary();
 };
 
 using _url_callback = std::function<void(GloveHttpRequest&, GloveHttpResponse&)>;
+using _ws_accept_callback = std::function<void(GloveHttpRequest& data, GloveWebSocketHandler& ws)>;
+using _ws_receive_callback = std::function<void(GloveWebSocketData& data, GloveWebSocketHandler& ws)>;
+using _ws_maintenance_callback = std::function<bool (GloveWebSocketHandler& ws)>;
+
+class GloveUriService
+{
+public:
+	GloveUriService()
+	{
+	}
+
+	virtual std::string name() const = 0;
+private:
+};
+
+class GloveUriHttpService : public GloveUriService
+{
+public:
+	GloveUriHttpService()
+	{
+	}
+
+	std::string name() const
+	{
+		return "http";
+	}
+};
+
+class GloveUriWebSocketService : public GloveUriService
+{
+public:
+	GloveUriWebSocketService(_ws_accept_callback accept, _ws_receive_callback receive, _ws_maintenance_callback maintenance, _ws_maintenance_callback close, uint64_t interval, uint64_t intervalsMaintenance, uint64_t fragmentation):_accept(accept), _receive(receive), _maintenance(maintenance), _close(close), _interval(interval), _intervalsMaintenance(intervalsMaintenance), _fragmentation(fragmentation)
+	{
+	}
+
+	std::string name() const
+	{
+		return "websocket";
+	}
+
+	/* We can use const frame */
+	void accept(GloveHttpRequest& request, GloveWebSocketHandler& ws)
+	{
+		if (_accept != nullptr)
+			_accept(request, ws);
+	}
+
+	/* We can use const frame */
+	void receive(GloveWebSocketData& data, GloveWebSocketHandler& ws)
+	{
+		if (_receive != nullptr)
+			_receive(data, ws);
+	}
+	
+	bool maintenance(GloveWebSocketHandler& ws)
+	{
+		if (_maintenance != nullptr)
+			return _maintenance(ws);
+
+		return false;
+	}
+
+	void close(GloveWebSocketHandler& ws)
+	{
+		if (_close != nullptr)
+			_close(ws);
+	}
+
+	uint64_t interval()
+	{
+		return _interval;
+	}
+
+	uint64_t intervalsMaintenance()
+	{
+		return _intervalsMaintenance;
+	}
+
+	uint64_t fragmentation()
+	{
+		return _fragmentation;
+	}
+	
+private:
+	_ws_receive_callback _receive;
+	_ws_accept_callback _accept;
+	_ws_maintenance_callback _maintenance;
+	_ws_maintenance_callback _close;
+	uint64_t _interval;
+	uint64_t _intervalsMaintenance;
+	uint64_t _fragmentation;
+};
 
 /** Glove HTTP Uri: Uri control, verify if a request matches a given URL format  */
 class GloveHttpUri
 {
- public:
+public:
   GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, int minArgs, std::vector<std::string> methods, bool partialMatch);
+  GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, int minArgs, std::vector<std::string> methods, bool partialMatch, GloveUriService& mission);
+
   ~GloveHttpUri();
 
   bool match(std::string method, GloveBase::uri uri, std::map<std::string, std::string> &special);
   void callAction(GloveHttpRequest& request, GloveHttpResponse& response);
- protected:
+	GloveUriService& mission()
+	{
+		return _mission;
+	}
+protected:
   int explodeArgs();
- private:
+private:
   std::string route;
+	GloveUriService& _mission;
   int minArgs, maxArgs;
   std::vector<std::string> arguments;
   std::vector<std::string> allowedMethods;
@@ -246,16 +380,20 @@ class GloveHttpUri
 /** Glove HTTP Server  */
 class GloveHttpServer : public GloveHttpCommon
 {
- public:
+public:
   typedef _url_callback url_callback;
+  typedef _ws_receive_callback ws_receive_callback;
+  typedef _ws_accept_callback ws_accept_callback;
+	typedef _ws_maintenance_callback ws_maintenance_callback;
+	
   static const std::vector<std::string> StandardMethods;
 
   /* Server configuration */
   GloveHttpServer();
-  GloveHttpServer(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT);
+  GloveHttpServer(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT, int secure=Glove::UNDEFINED_SSL, std::string certchain="", std::string certkey="");
   virtual ~GloveHttpServer();
 
-  void listen(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT);
+  void listen(int listenPort, std::string bind_ip="", const size_t buffer_size=GLOVE_DEFAULT_BUFFER_SIZE, const unsigned backlog_queue=GLOVE_DEFAULT_BACKLOG_QUEUE, int domain=GLOVE_DEFAULT_DOMAIN, unsigned max_accepted_clients=GLOVE_DEFAULT_MAX_CLIENTS, double timeout=GLOVE_DEFAULT_TIMEOUT, double keepalive_timeout=GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT, int secure=Glove::UNDEFINED_SSL, std::string certchain="", std::string certkey="");
   std::string defaultContentType(std::string dct="");
 
   std::string serverSignature(std::string newSig);
@@ -274,14 +412,17 @@ class GloveHttpServer : public GloveHttpCommon
   std::string autoResponses(std::string vhost, short responseId);
   void addAutoResponse(std::string vhost, short id, std::string response);
 
+	/* routes */
   void addRoute(std::string route, url_callback callback, std::string vhost=defaultVhostName, int maxArgs=-1, int minArgs=-1, std::vector<std::string> allowedMethods = StandardMethods, bool partialMatch=false);
   void addRoute(std::string route, url_callback callback, int maxArgs, int minArgs=-1, std::vector<std::string> allowedMethods = StandardMethods);
+  void addWebSocket(std::string route, url_callback callback, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback=nullptr, ws_maintenance_callback closeCallback=nullptr,  std::string host=defaultVhostName, int maxArgs=-1, int minArgs=-1, bool partialMatch=false, url_callback normalhttp = nullptr);
+  void addWebSocket(std::string route, url_callback callback, int maxArgs, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback=nullptr, ws_maintenance_callback closeCallback=nullptr, int minArgs=-1, bool partialMatch = false, url_callback normalhttp = nullptr);
   void addRest(std::string route, std::string host, int minArgs, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall=nullptr);
   void addRest(std::string route, int minArgs, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall=nullptr);
   void addRest(std::string route, std::string host, int minArgs, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr);
   void addRest(std::string route, int minArgs, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr);
   /* Note, it will add it on any errorCode, right or wrong.
-   Use with caution */
+		 Use with caution */
   void addResponseProcessor(short errorCode, url_callback callback);
   void addResponseGenericProcessor(short errorCode, url_callback callback);
   void addResponseProcessor(std::string vhost, short errorCode, url_callback callback);
@@ -291,9 +432,9 @@ class GloveHttpServer : public GloveHttpCommon
   unsigned version();
   std::string versionString();
   static std::string getDefaultVhostName()
-    {
-      return defaultVhostName;
-    }
+	{
+		return defaultVhostName;
+	}
   /* get stats */
   /* Gets number of connections */
   unsigned connectionHits()
@@ -323,7 +464,8 @@ class GloveHttpServer : public GloveHttpCommon
   /* Common callbacks */
   static void fileServer(GloveHttpRequest &request, GloveHttpResponse& response);
   static void fileServerExt(GloveHttpRequest &request, GloveHttpResponse& response, std::string localPath);
-
+  static void fileServerFixed(GloveHttpRequest &request, GloveHttpResponse& response, std::string path);
+	
   /* Default response processord */
   static void response404Processor(GloveHttpRequest& request, GloveHttpResponse& response);
   static void response4XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response);
@@ -371,25 +513,84 @@ class GloveHttpServer : public GloveHttpCommon
    * @return Current value
    */
 #define option_conf(container, type, option) type option(type val)	\
-  {									\
-    return (container.option=val);					\
-  }									\
-  									\
-  type option()								\
-  {									\
-    return container.option;						\
+  {																																	\
+    return (container.option=val);																	\
+  }																																	\
+																																		\
+  type option()																											\
+  {																																	\
+    return container.option;																				\
   }
 
   option_conf(ghoptions, double, keepalive_timeout);
-
 #undef option_conf
+
+	std::string compression(std::string methods)
+	{
+		ghoptions.compression.clear();
+		ghoptions.compression = tokenize(methods, ",", defaultTrim);
+		return compression();
+	}
+
+	std::vector<std::string>& compressionMethods()
+	{
+		return ghoptions.compression;
+	}
+	
+	std::string compression()
+	{
+		std::string out;
+		for (auto cm=ghoptions.compression.begin(); cm != ghoptions.compression.end(); ++cm)
+			{
+				if (cm != ghoptions.compression.begin())
+					out+=", ";
+				
+				out+=*cm;
+			}
+		return out;
+	}
+
+	uint64_t webSocketsMaintenanceInterval(uint64_t val)
+	{
+		wsMaintenanceInterval = val;
+		return wsMaintenanceInterval;
+	}
+
+	uint64_t webSocketsMaintenanceInterval()
+	{
+		return wsMaintenanceInterval;		
+	}
+
+	uint64_t webSocketsInterval(uint64_t val)
+	{
+		wsInterval = val;
+		return wsInterval;
+	}
+
+	uint64_t webSocketsInterval()
+	{
+		return wsInterval;
+	}
+
+	uint64_t webSocketsFragmentation(uint64_t val)
+	{
+		wsFragmentation = val;
+		return wsFragmentation;
+	}
+
+	uint64_t webSocketsFragmentation()
+	{
+		return wsFragmentation;
+	}
+
   /* Mime types */
   /* Who would want different MIME Types in different instances
-   of the server? */
- protected:
+		 of the server? */
+protected:
   struct
   {
     double keepalive_timeout;	/* if 0, keepalive is disabled */
+		std::vector<std::string> compression;	/* compression method enabled */
   } ghoptions;
   /* We could make this by method in the future... */
   struct Httpmetrics
@@ -423,6 +624,12 @@ class GloveHttpServer : public GloveHttpCommon
   static const std::map<short, std::string> _defaultMessages;
   static const std::string defaultVhostName;
 
+	/* Web Sockets intervals for maintenance callbacks */
+	uint64_t wsMaintenanceInterval;
+	/* Web Sockets ms for interval */
+	uint64_t wsInterval;
+	/* Web Sockets message fragmentation size */
+	uint64_t wsFragmentation;
   int port;
   std::string _serverSignature; 
   std::string _simpleSignature;
@@ -431,6 +638,7 @@ class GloveHttpServer : public GloveHttpCommon
   Httpmetrics metrics;
 
   bool listening;
+	void applyProcessors(VirtualHost* vhost, GloveHttpRequest& request, GloveHttpResponse& response, int code);
   void baseInitialization();
   void initializeMetrics();
   bool hasServer()
@@ -439,6 +647,10 @@ class GloveHttpServer : public GloveHttpCommon
   }
   bool findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
   int clientConnection(Glove::Client &client);
+	bool webSocketHandshake(Glove::Client& client, GloveHttpRequest& req);
+	/* Handshake for version 13 */
+	bool webSocket13Handshake(Glove::Client& client, GloveHttpRequest& req);
+	int doWebSockets(Glove::Client& client, GloveHttpUri* guri, GloveHttpRequest& request, GloveHttpResponse& response); 
   int _receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout=0);
 
   void gloveError(Glove::Client &client, int clientId, GloveException &e);

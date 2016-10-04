@@ -11,6 +11,7 @@
 *   - Lots of ideas borrowed from other projects
 * 
 * Changelog
+*  20161004 : - Use CRLF from utils.hpp
 *  20160927 : - GloveHttpClientRequest / GloveHttpClientResponse / request methods
 *             - Separated cpp and hpp file
 *  20160830 : - Just requests by URL
@@ -206,13 +207,13 @@ GloveHttpClientResponse GloveHttpClient::getUrlData(GloveHttpClientRequest &requ
 	g.send(reqStr+ "\r\n"+request.data);
 	out = g.receive();
 	auto firstByte = std::chrono::steady_clock::now();
-	auto firstline = out.find(GloveBase::CRLF); /* End of first line. Protocol Code Status...*/
+	auto firstline = out.find(GloveDef::CRLF); /* End of first line. Protocol Code Status...*/
 	if (firstline == std::string::npos)
 		throw GloveHttpClientException (2, "Didn't receive protocol or status");
 
 	status = parseFirstLine(out.substr(0, firstline), protocol, statusmsg);
 
-	auto headerend = out.find(GloveBase::CRLF2);
+	auto headerend = out.find(GloveDef::CRLF2);
 	if (headerend == std::string::npos)
 		throw GloveHttpClientException (3, "Unexpected data received");
 

@@ -15,6 +15,7 @@
 *   - MUST BE USED WITH multipartpart.hpp/cpp
 * 
 * Changelog
+*  20161004 : - Using CRLF from utils.hpp
 *  20160927 : - First release
 *
 * To-do:
@@ -46,11 +47,7 @@
 
 #include "glovemultipart.hpp"
 #include "gloveexception.hpp"
-
-namespace
-{
-	std::string CRLF = "\r\n";
-}
+#include "utils.hpp"
 
 GloveMultipart::GloveMultipart(std::string boundary):_boundary(boundary)
 {
@@ -65,9 +62,9 @@ std::string GloveMultipart::str()
 	std::string out;
 	for (GloveMultipartPart mpp : parts)
 		{
-			out+="--"+_boundary+CRLF+mpp.str()+CRLF;
+			out+="--"+_boundary+GloveDef::CRLF+mpp.str()+GloveDef::CRLF;
 		}
-	out+="--"+_boundary+"--"+CRLF;
+	out+="--"+_boundary+"--"+GloveDef::CRLF;
 	return out;
 }
 
