@@ -16,6 +16,7 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog
+*  20161007 : - bug fixed parsing URI arguments
 *  20161004 : - minor bugs to free resources when closing unfinished connections
 *           : - getservbyname wrapper with additional services (for now, only ws:// and wss://)
 *           : - remove CRLF constants and use it from GloveDef (global constants for all Glove headers)
@@ -1020,93 +1021,92 @@ std::string GloveBase::user_and_pass(const std::string& user, const std::string 
 	 return res;
  }
 
-std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string& rawArguments, std::string& fragment, bool urldecode)
-{
-  std::map<std::string, std::string> args;
+ std::map<std::string, std::string> GloveBase::extract_uri_arguments(std::string& rawArguments, std::string& fragment, bool urldecode)
+ {
+	 std::map<std::string, std::string> args;
 
-  auto _slash = rawArguments.find_first_of("&#");
-  std::string::size_type astart = 0;
+	 auto _slash = rawArguments.find_first_of("&#");
+	 std::string::size_type astart = 0;
 	
-	auto get_new_key = [] (std::string key, std::string index) {
-    auto pos = key.find("[]");
-    if (pos != std::string::npos)
-      key.replace(pos, 2, "["+index+"]");
-    else
-      key+= "["+index+"]";
-    return key;
-  };
-  auto push_final = [&] (std::string key, std::string val) {
-    auto _key = key;
-    if (_key.find("[]") != std::string::npos)
-      _key.replace(_key.find("[]"), 2, "[");
+	 auto get_new_key = [] (std::string key, std::string index) {
+		 auto pos = key.find("[]");
+		 if (pos != std::string::npos)
+			 key.replace(pos, 2, "["+index+"]");
+		 else
+			 key+= "["+index+"]";
+		 return key;
+	 };
+	 auto push_final = [&] (std::string key, std::string val) {
+		 auto _key = key;
+		 if (_key.find("[]") != std::string::npos)
+			 _key.replace(_key.find("[]"), 2, "[");
 
-    int count = std::count_if(args.begin(), args.end(), [_key](std::pair<std::string, std::string> el) -> bool
-    {
-      return (el.first.find(_key) != std::string::npos);
-    });
-    if (count>0)
-      {
-	auto alone = args.find(key);
-	std::string newKey;
-	if (alone != args.end())
-	  {
-	    auto alone_copy(*alone);
-	    args.erase(alone);
-	    args[get_new_key(alone_copy.first,"0")] = alone_copy.second;
-	  }
-	args[get_new_key(key, std::to_string(count))] = val;
-      }
-    else
-      args[key] = val;
-  };
+		 int count = std::count_if(args.begin(), args.end(), [_key](std::pair<std::string, std::string> el) -> bool
+		 {
+			 return (el.first.find(_key) != std::string::npos);
+		 });
+		 if (count>0)
+			 {
+				 auto alone = args.find(key);
+				 std::string newKey;
+				 if (alone != args.end())
+					 {
+						 auto alone_copy(*alone);
+						 args.erase(alone);
+						 args[get_new_key(alone_copy.first,"0")] = alone_copy.second;
+					 }
+				 args[get_new_key(key, std::to_string(count))] = val;
+			 }
+		 else
+			 args[key] = val;
+	 };
 	
-  auto push_argument = [&] (bool zerostart=false) {
-    if ( (!zerostart) && (astart==0) )
-      return;
+	 auto push_argument = [&] (/* bool zerostart=false */) {
+		 /* if ( (!zerostart) && (astart==0) ) */
+		 /* 	 return; */
+		 std::string temp2 = rawArguments.substr(astart, _slash-astart);
+		 auto _equal = temp2.find('=');
+		 if (urldecode)
+			 {
+				 if (_equal != std::string::npos)
+					 push_final(GloveCoding::urldecode(temp2.substr(0,_equal)), GloveCoding::urldecode(temp2.substr(_equal+1)));
+				 else
+					 push_final(GloveCoding::urldecode(temp2), "");
+			 }
+		 else
+			 {
+				 if (_equal != std::string::npos)
+					 push_final(temp2.substr(0,_equal), temp2.substr(_equal+1));
+				 else
+					 push_final(temp2, "");
+			 }
+	 };
 
-    std::string temp2 = rawArguments.substr(astart, _slash-astart);
-    auto _equal = temp2.find('=');
-    if (urldecode)
-      {
-				if (_equal != std::string::npos)
-					push_final(GloveCoding::urldecode(temp2.substr(0,_equal)), GloveCoding::urldecode(temp2.substr(_equal+1)));
-				else
-					push_final(GloveCoding::urldecode(temp2), "");
-      }
-    else
-      {
-				if (_equal != std::string::npos)
-					push_final(temp2.substr(0,_equal), temp2.substr(_equal+1));
-				else
-					push_final(temp2, "");
-      }
-  };
+	 do
+		 {
+			 if (_slash == std::string::npos)
+				 {
+					 _slash = rawArguments.length();
+					 push_argument();
+					 break;
+				 }
+			 if (rawArguments[_slash] == '&')
+				 {
+					 push_argument(/* true */);
+				 }
+			 else if (rawArguments[_slash] == '#')
+				 {
+					 push_argument();
+					 fragment = rawArguments.substr(_slash+1);
+					 rawArguments = rawArguments.substr(0, _slash);
+					 break;
+				 }
 
-  do
-    {
-      if (_slash == std::string::npos)
-	{
-	  push_argument();
-	  break;
-	  /* _slash = rawArguments.length(); */
-	}
-      if (rawArguments[_slash] == '&')
-	{
-	  push_argument(true);
-	}
-      else if (rawArguments[_slash] == '#')
-	{
-	  push_argument();
-	  fragment = rawArguments.substr(_slash+1);
-	  rawArguments = rawArguments.substr(0, _slash);
-	  break;
-	}
+			 astart = _slash+1;
+		 } while (_slash = rawArguments.find_first_of("&#", _slash+1)/* , astart != rawArguments.length() */ );
 
-      astart = _slash+1;
-    } while (_slash = rawArguments.find_first_of("&#", _slash+1)/* , astart != rawArguments.length() */ );
-
-  return args;
-}
+	 return args;
+ }
 
 // Ladies and gentlemen, the unmaintainable !
  GloveBase::uri GloveBase::get_from_uri (const std::string &uristring, bool urldecode, bool resolve, std::string service_separator)

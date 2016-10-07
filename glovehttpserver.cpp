@@ -219,6 +219,20 @@ std::string GloveHttpRequest::getData(std::string elem, bool exact) const
   return "";
 }
 
+std::vector<std::pair<std::string, std::string> > GloveHttpRequest::getDataCol() const
+{
+  std::vector<std::pair<std::string, std::string> > res;
+  if (contentType=="application/x-www-form-urlencoded")
+    {
+			for (auto elem : urlencoded_data)
+				{
+					res.push_back(elem);
+				}
+		}
+	
+	return res;
+}
+
 std::vector<std::pair<std::string, std::string> > GloveHttpRequest::getDataCol(std::string el, bool exact) const
 {
   std::vector<std::pair<std::string, std::string> > res;
@@ -710,7 +724,7 @@ void GloveHttpServer::baseInitialization()
 	
   if (addVhost("%") != GloveHttpErrors::ALL_OK)
     return;			/* Exception here? */
-
+	std::cout << "INICIALIZADO\n";
   initializeMetrics();
 }
 
@@ -737,7 +751,7 @@ void GloveHttpServer::listen(int listenPort, std::string bind_ip, const size_t b
   // messages = _defaultMessages;
 
   server = new Glove();
-	server->server_error_callback(								std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3));
+	server->server_error_callback(std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3));
 	server->buffer_size(buffer_size);
 	server->listen(listenPort, 
 								std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
