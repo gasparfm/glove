@@ -11,7 +11,7 @@ window.onload = function () {
   };
   socket.onopen = function (event) {
 		document.getElementById('page-wrapper').className='connected';
-    socketStatus.innerHTML = 'Connected to: ws://echo.websocket.org';
+    socketStatus.innerHTML = 'Connected to: ws://localhost:8080/echo';
     socketStatus.className = 'open';
   };
   socket.onmessage = function (event) {

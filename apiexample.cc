@@ -312,6 +312,7 @@ int main(int argc, char *argv[])
 	CinemaApi cine;
 
   GloveHttpServer serv(8080, "", 2048);
+	serv.compression("gzip, deflate");
 	namespace ph = std::placeholders;
   /* serv.addRoute("/films/$filmId", restFilm, 2, 1, { "GET", "POST", "PUT", "PATCH", "DELETE" }); */
 	serv.addRest("/films/$filmId", 1,

@@ -11,6 +11,7 @@
 *   - Lots of ideas borrowed from other projects
 * 
 * Changelog
+*  20170112 : - SSL condition to compile without SSL support
 *  20161004 : - Use CRLF from utils.hpp
 *  20160927 : - GloveHttpClientRequest / GloveHttpClientResponse / request methods
 *             - Separated cpp and hpp file
@@ -176,8 +177,10 @@ GloveHttpClientResponse GloveHttpClient::getUrlData(GloveHttpClientRequest &requ
 	/* We can debug uri here */
 	/* u.host="localhost"; */
 	/* u.port=1234; */
+#if ENABLE_OPENSSL
 	if (checkCertificates)
 		g.SSLFlags(Glove::SSL_FLAG_ALL);
+#endif
 	g.shutdown_on_destroy(true);
 	g.timeout_when_data(false);
 	g.remove_exceptions (Glove::EXCEPTION_DISCONNECTED);

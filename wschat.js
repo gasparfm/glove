@@ -34,7 +34,7 @@ window.onload = function () {
 	
   socket.onopen = function (event) {
 		document.getElementById('page-wrapper').className='connected';
-    socketStatus.innerHTML = 'Connected to: ws://echo.websocket.org';
+    socketStatus.innerHTML = 'Connected to: %CHATURL%';
     socketStatus.className = 'open';
 		askName();
   };

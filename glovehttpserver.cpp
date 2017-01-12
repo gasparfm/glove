@@ -14,6 +14,7 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20170112 : std::cout removed
 *  20161004 : Minor connection bugs fixed
 *  20161003 : Fixed bug. Error 500 when compression not enabled.
 *           : HTTPS server
@@ -724,7 +725,7 @@ void GloveHttpServer::baseInitialization()
 	
   if (addVhost("%") != GloveHttpErrors::ALL_OK)
     return;			/* Exception here? */
-	std::cout << "INICIALIZADO\n";
+	/* std::cout << "Initialized\n"; */
   initializeMetrics();
 }
 
@@ -1144,7 +1145,6 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       auto processingTime = std::chrono::steady_clock::now();
 			if (response.applyCompression(request, ghoptions.compression)<0)
 				{
-					std::cout << "LA COMPRESION SALE MAL\n";
 					response << GloveHttpResponse::setCode(GloveHttpResponseCode::INTERNAL_ERROR);
 					applyProcessors(vhost, request, response, response.code());
 				}
