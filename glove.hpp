@@ -1836,12 +1836,13 @@ protected:
    * Performs SSL client handshake
    * This method is *only present if ENABLE_OPENSSL is defined
    *
+	 * @param host host name for SNI
    * @param exception_on_handshake_failure self-explanatory
    *
    * @return true if connected, false if don't (but if the exception is enabled,
    *         it will return always TRUE).
    */
-  bool SSLClientHandshake(bool exception_on_handshake_failure=true);
+  bool SSLClientHandshake(std::string host, bool exception_on_handshake_failure=true);
 
   /**
    * Initialize openSSL

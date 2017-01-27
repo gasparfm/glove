@@ -87,7 +87,7 @@ public:
    General exceptions will be this type. It's a simple exception class, just with a code
    and message.
 */
-class GloveHttpClientException : public std::exception
+class GloveHttpClientException : public GloveException
 {
 public:
   /**
@@ -97,36 +97,12 @@ public:
    * @param message   Error message
    *
    */
-  GloveHttpClientException(const int& code, const std::string &message): _code(code), _message(message)
+  GloveHttpClientException(const int& code, const std::string &message): GloveException(code, message)
   {
   }
 
   virtual ~GloveHttpClientException() throw ()
   {
   }
-
-  /**
-   * Exception message int char*
-   */
-  const char* what() const throw()
-  {
-    return _message.c_str();
-  }
-
-  /**
-   * Exception error code
-   *
-   * @return error code
-   */
-  int code() const
-  {
-    return _code;
-  }
-
-protected:
-  /** Error code */
-  int _code;
-  /** Error message  */
-  std::string _message;
 };
 

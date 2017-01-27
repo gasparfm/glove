@@ -11,6 +11,7 @@
 *   - Lots of ideas borrowed from other projects
 * 
 * Changelog
+*  20170127 : - Error handler for background requests
 *  20170112 : - SSL condition to compile without SSL support
 *  20161004 : - Use CRLF from utils.hpp
 *  20160927 : - GloveHttpClientRequest / GloveHttpClientResponse / request methods
@@ -74,9 +75,10 @@ GloveHttpClient::GloveHttpClient(std::string url, GloveHttpClientResponse& r, st
 	r = request(url, reqType, data, headers, contentType);
 }
 
-GloveHttpClient::GloveHttpClient(Callback callback): GloveHttpClient()
+GloveHttpClient::GloveHttpClient(Callback callback, ErrorHandler errhandler): GloveHttpClient()
 {
 	_callback = callback;
+	_errhandler = errhandler;
 }
 	
 GloveHttpClient::~GloveHttpClient()
@@ -283,11 +285,20 @@ void GloveHttpClient::backgroundThread()
 			queueMutex.unlock();
 			return ;
 		}
+	
 	GloveHttpClientRequest request = requestQueue.front();
-	requestQueue.erase(requestQueue.begin());
-	queueMutex.unlock();
+	try
+		{
+			requestQueue.erase(requestQueue.begin());
+			queueMutex.unlock();
 
-	GloveHttpClientResponse response = getUrlData(request, clientConfig.timeout, clientConfig.checkCertificates, clientConfig.maxRedirects);
-	_callback(request, response);
+			GloveHttpClientResponse response = getUrlData(request, clientConfig.timeout, clientConfig.checkCertificates, clientConfig.maxRedirects);
+			_callback(request, response);
+		}
+	catch (GloveException &e)
+		{
+			if (_errhandler)
+				_errhandler(request.url, e);
+		}
 	backgroundThread();
 }

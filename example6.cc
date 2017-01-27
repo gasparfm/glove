@@ -42,16 +42,24 @@ void res(GloveHttpClientRequest request, GloveHttpClientResponse response)
 	std::cout << r.firstByte() << std::endl;
 }
 
+void errorh(std::string url, GloveException& e)
+{
+	std::cout << "Error fetching: "<<url<<"("<<e.what()<<")"<<std::endl;
+}
+
 int main(int argc, char *argv[])
 {
   try
     {
-			GloveHttpClient g(res);
-			g.bgrequest("http://totaki.com");
-			g.bgrequest("http://google.com");
-			g.bgrequest("http://facebook.com");
+			GloveHttpClient g(res, errorh);
+			g.bgrequest("https://facebook.com");
+			g.bgrequest("https://gaspar.totaki.com"); /* Needs SNI */
+			g.bgrequest("https://totaki.com");
+			/* g.bgrequest("http://facebook.com"); */
 			g.bgrequest("http://twitter.com");
 			/* Just wait */
+
+			std::cout << "Press enter..."<<std::endl;
 			int kk;
 			cin >> kk;
     } 

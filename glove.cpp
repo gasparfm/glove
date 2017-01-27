@@ -16,6 +16,7 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog
+*  20170127 : - sets tlsext_host_name when connecting with SSL. (SNI support!!)
 *  20161007 : - bug fixed parsing URI arguments
 *  20161004 : - minor bugs to free resources when closing unfinished connections
 *           : - getservbyname wrapper with additional services (for now, only ws:// and wss://)
@@ -198,6 +199,12 @@
  *  40: "SSL Timeout. Some kind of bug makes SSL_read() freeze with strange server response on
  *      certain openSSL versions. With this, an additional timeout is applied, and this
  *      timeout has ran out.
+ *  41: "SSL Method not specified"
+ *      Found on Glove::getSSLClientMethod() and Glove::getSSLServerMethod() when SSL connection
+ *      method is not in ssl_options.ssl_method.
+ *  42: "Failed setting TLS host name"
+ *      Found on Glove::SSLClientHandshake() when setting tlsext_host_name.
+ *
  */
 #undef _GLIBCXX_USE_CLOCK_MONOTONIC
 #include "glove.hpp"
@@ -1367,7 +1374,8 @@ void Glove::fill_connection_info(addrinfo *rp, int port)
 
 	 if (secure == ENABLE_SSL)
 		 {
-			 bool hndshk = SSLClientHandshake();
+			 bool hndshk = SSLClientHandshake(host);
+			 
 			 if ( (hndshk) && (ssl_options.flags & SSL_FLAG_GET_CIPHER_INFO) )
 				 SSLGetCipherInfo();
 
@@ -1450,7 +1458,7 @@ void Glove::SSLServerInitialize()
     throw GloveException(36, "Private key doesn't match the certificate");
 }
 
-bool Glove::SSLClientHandshake(bool exception_on_handshake_failure)
+ bool Glove::SSLClientHandshake(std::string host, bool exception_on_handshake_failure)
 {
   initializeOpenSSL();
   conn.ctx = SSL_CTX_new(getSSLClientMethod());
@@ -1464,6 +1472,9 @@ bool Glove::SSLClientHandshake(bool exception_on_handshake_failure)
   if (conn.ssl == NULL)
     throw GloveException(23, "Couldn't create SSL handler");
 
+	if (SSL_set_tlsext_host_name(conn.ssl, host.c_str())!= 1)
+		throw GloveException(42, "Failed setting TLS host name");
+	
   if (SSL_set_fd(conn.ssl, conn.sockfd) == 0)
     throw GloveException(24, "Couldn't assign socket to SSL session");
 

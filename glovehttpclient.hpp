@@ -120,13 +120,14 @@ class GloveHttpClient : public GloveHttpCommon
 {
 public:
 	typedef std::function<void(GloveHttpClientRequest, GloveHttpClientResponse)> Callback;
+	typedef std::function<void(std::string, GloveException&)> ErrorHandler;
 	
   GloveHttpClient();
 
 	GloveHttpClient(std::string url, GloveHttpClientResponse& r, std::string reqType="GET");
 	GloveHttpClient(std::string url, GloveHttpClientResponse& r, std::string reqType, std::string& data);
 	GloveHttpClient(std::string url, GloveHttpClientResponse& r, std::string reqType, std::string& data, std::map<std::string, std::string>& headers, std::string contentType="");
-	GloveHttpClient(Callback callback);
+	GloveHttpClient(Callback callback, ErrorHandler errhandler=nullptr);
   ~GloveHttpClient();
 	GloveHttpClientResponse request(std::string url, std::string reqType="GET");
 	GloveHttpClientResponse request(std::string url, std::string reqType, std::string& data);
@@ -148,6 +149,7 @@ protected:
 	void backgroundThread();
 	
 	Callback _callback;
+	ErrorHandler _errhandler;
 	std::mutex queueMutex;
 	std::vector <GloveHttpClientRequest> requestQueue;
 	

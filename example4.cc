@@ -85,7 +85,7 @@ int recibo (Glove::Client &client)
 int main(int argc, char *argv[])
 {
   Glove g;
-	/* Se cuelga cuando intentas conectar sin SSL */
+
   try
     {
       cout << g.buffer_size(123)<<endl;
