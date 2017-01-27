@@ -140,7 +140,25 @@ public:
 	{
 		_callback = callback;
 	}
+
+#define clientConfigSetting(name, type) type name()	\
+	{																									\
+		return clientConfig.name;												\
+	}																									\
+	type name(type val)																\
+	{																									\
+		clientConfig.name = val;												\
+		return clientConfig.name;												\
+	}
+
+	clientConfigSetting(userAgent, std::string);
+	clientConfigSetting(timeout, double);
+	clientConfigSetting(checkCertificates, bool);
+	clientConfigSetting(maxRedirects, int);
+	clientConfigSetting(followRedirects, bool);
 	
+#undef clientConfigSetting	
+
 protected:
   int parseFirstLine(std::string input, std::string& protocol, std::string &statusmsg);
   GloveHttpClientResponse getUrlData(GloveHttpClientRequest &request, double timeout, bool checkCertificates, int max_redirects);
