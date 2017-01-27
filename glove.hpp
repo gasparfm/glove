@@ -24,7 +24,7 @@
 #   define GLOVEDEBUG 1
 #endif
 
-#include <exception>
+#include "gloveexception.hpp"
 #include <string>
 #include <vector>
 #include <functional>
@@ -32,6 +32,7 @@
 #include <ctime>
 #include <chrono>
 #include <map>
+#include <deque>
 #include <sstream>
 #include <iostream>		// debug only
 #include <algorithm>
@@ -80,83 +81,20 @@
  */
 #define GLOVE_DEFAULT_SSL_CAPATH "/etc/ssl/certs"
 
+/**
+ * Default connections buffer size. It is the max. number of historic incomming
+ * connections logged. It can give us information about old connections, clients
+ * and so on
+ */
+#define GLOVE_DEFAULT_MAX_CONNECTIONS_BUFFER 100
+
 namespace
 {
   // this is the type of std::cout
   typedef std::basic_ostream<char, std::char_traits<char> > ostream_type;
-
+	
   // this is the function signature of std::endl
   typedef ostream_type& (*ostream_manipulator)(ostream_type&);
-};
-
-/**
-   General exceptions will be this type. It's a simple exception class, just with a code
-   and message.
- */
-class GloveException : public std::exception
-{
-public:
-
-  /**
-   * GloveException
-   *
-   * @param code      Error code
-   * @param message   Error message
-   *
-   */
-  GloveException(const int& code, const std::string &message): _code(code), _message(message)
-  {
-  }
-
-  virtual ~GloveException() throw ()
-  {
-  }
-
-  /**
-   * Exception message int char*
-   */
-  const char* what() const throw()
-  {
-    return _message.c_str();
-  }
-
-  /**
-   * Exception error code
-   *
-   * @return error code
-   */
-  int code() const
-  {
-    return _code;
-  }
-
-protected:
-  /** Error code */
-  int _code;
-  /** Error message  */
-  std::string _message;
-};
-
-/**
-   URI exceptions. Fails addressing a resource
- */
-class GloveUriException : public GloveException
-{
-public:
-  /**
-   * GloveUriException
-   *
-   * @param code      Error code
-   * @param message   Error message
-   *
-   */
-  GloveUriException(const int& code, const std::string &message): GloveException(code, message)
-  {
-  }
-
-  virtual ~GloveUriException() throw ()
-  {
-  }
 };
 
 /**
@@ -165,6 +103,8 @@ public:
 class GloveBase
 {
 public:
+  typedef std::chrono::system_clock::time_point time_point;
+
   /**
      Controls the behaviour of select()
    */
@@ -302,6 +242,19 @@ public:
     /** Port  */
     int port;
 
+		std::string servicehost(std::string serv="")
+		{
+			if (serv.empty())
+				serv=service;
+			try
+				{
+					return GloveBase::build_uri(serv, host, port);
+				}
+			catch (GloveUriException& e)
+				{
+					return "";
+				}
+		}
     /**
      * DEBUG Only: used to get information about this URI, to print on
      *       screen/write to a file/etc, but not a suitable format for
@@ -315,10 +268,10 @@ public:
       out+="Host: "+host+"\n";
       out+="Path: "+rawpath+"\n";
       for (auto _pi = path.begin(); _pi != path.end(); ++_pi)
-	out+= "   * "+*_pi+"\n";
+				out+= "   * "+*_pi+"\n";
       out+="Arguments: "+rawarguments+"\n";
       for (auto _pi = arguments.begin(); _pi != arguments.end(); ++_pi)
-	out+= "   * "+_pi->first+" = "+_pi->second+"\n";
+				out+= "   * "+_pi->first+" = "+_pi->second+"\n";
       out+="Service: "+service+" "+((secure)?"(SECURE)":"")+"\n";
       out+="Fragment: "+fragment+"\n";
       out+="Port: "+std::to_string(port)+"\n";
@@ -329,12 +282,12 @@ public:
     }
   };
 
-  /** CRLF string => "\r\n" */
-  static const char* CRLF;
-
-  /** CRLF2 string => "\r\n\r\n" */
-  static const char* CRLF2;
-
+	static const uint16_t LOG_CRITICAL;
+	static const uint16_t LOG_ERROR;
+	static const uint16_t LOG_WARNING;
+	static const uint16_t LOG_NOTICE;
+	static const uint16_t LOG_PROCESS;
+	
   /**
    * Default constructor with the default values:
    *   Timeout = @see GLOVE_DEFAULT_TIMEOUT
@@ -346,7 +299,7 @@ public:
    *   Input filters enabled
    *   Output filters enabled
    */
-  GloveBase(): default_values({GLOVE_DEFAULT_TIMEOUT, EXCEPTION_ALL, false, false, 0, GLOVE_DEFAULT_BUFFER_SIZE, true, true})
+  GloveBase(): default_values({GLOVE_DEFAULT_TIMEOUT, EXCEPTION_ALL, false, false, 0, GLOVE_DEFAULT_BUFFER_SIZE, true, true}), _loggerCallback(nullptr)
   {
   }
 
@@ -357,6 +310,26 @@ public:
   {
   }
 
+		  // get info...
+  /**
+   * Try to guess if the connection is open
+   *
+   * @return true if it is
+   */
+  bool is_connected();
+
+	/**
+	 * Set logger function
+	 */
+	void loggerCallback(std::function<void(uint8_t, uint16_t, std::string message, std::string moreData)> callback)
+	{
+		_loggerCallback = callback;
+	}
+
+	void log(uint8_t type, uint16_t code, std::string message, std::string more);
+	
+  static int matchIp(const uint32_t address, const uint32_t network, const uint8_t bits);
+  static int matchIp(const std::string address, const std::string cidr, bool notOnlyCIDR=false, bool noException=true);
   /**
    * Get connected host
    *
@@ -466,6 +439,7 @@ public:
     default_values.exceptions&=~exceptions;
   }
 
+  static int select(int fd, const double timeout, int test);
   // socket handling
   /**
    * Performs a select() operation on the opened socket used
@@ -570,6 +544,24 @@ public:
     get_address(addr, port, noexcp);
     return addr;
   }
+
+#if ENABLE_OPENSSL
+  /**
+   * Gets current status of SSL Timeout
+   */
+  bool get_ssltimeout()
+  {
+    return default_values.ssltimeout;
+  }
+
+  /**
+   * Sets current status of SSL Timeout
+   */
+  void set_ssltimeout(bool newTimeout)
+  {
+    default_values.ssltimeout = newTimeout;
+  }
+#endif
 
   /**
    * Gets connected port. It calls get_address() to get all the
@@ -848,6 +840,16 @@ public:
   void disconnect(int how=SHUT_XX);
 
   // other utils
+
+	/**
+	 * Gets service by name
+	 * Asks the system for a service by name, get the service default port
+	 *
+	 * @param name    Service name
+	 * @return service and port
+	 */
+	static uint16_t getServByName(std::string name);
+
   /**
    * Create URI string
    *
@@ -873,7 +875,9 @@ public:
   }
   // service separator : "://"
   // 
-  static uri get_from_uri (const std::string &uristring, bool resolve=true, std::string service_separator="");
+  static uri get_from_uri (const std::string &uristring, bool urldecode=true, bool resolve=true, std::string service_separator="");
+  /* extract uri arguments */
+  static std::map<std::string, std::string> extract_uri_arguments(std::string& rawArguments, std::string& fragment, bool urldecode=true);
 
   // some more tools
 
@@ -885,50 +889,6 @@ public:
    * @return Service name in string
    */
   static std::string getServByPort(int port);
-
-  /**
-   * URL Encode string. To make it suitable for trasceiving with some protocols.
-   * borrowed from original knot https://github.com/r-lyeh/knot
-   * knot had adapted it from code by Fred Bulback
-   *
-   * @param str String to urlencode 
-   *
-   * @return urlencoded string
-   */
-  static std::string urlencode( const std::string &str );
-
-  /**
-   * URL Decode string. To make it readable easily after transceiving by some protocols
-   * borrowed from original knot https://github.com/r-lyeh/knot
-   * knot had adapted it from code by Fred Bulback
-   *
-   * @param str String to urldecode
-   *
-   * @return urldecoded string
-   */
-  static std::string urldecode( const std::string &str );
-
-  /**
-   * Base64 encode a string.
-   * Originally by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
-   * Left as char* because sometimes it's useful to encode a file when reading it.
-   *
-   * @param s     String to encode
-   * @param len   How many bytes to encode
-   *
-   * @return encoded string
-   */
-  static std::string base64_encode(unsigned char const* s, unsigned int len);
-
-  /**
-   * Base64 decode a string.
-   * Originally by René Nyffenegger (https://github.com/ReneNyffenegger/development_misc/tree/master/base64)
-   *
-   * @param s    String to decode
-   *
-   * @return decoded string .
-   */
-  static std::string base64_decode(std::string const& s);
 
 protected:
 #if ENABLE_OPENSSL
@@ -988,7 +948,8 @@ protected:
   std::chrono::time_point<std::chrono::system_clock> start_dtm;
   /** Current connection info  */
   hostinfo connectionInfo;
-
+	std::function<void(uint8_t, uint16_t, std::string message, std::string moreData)> _loggerCallback;
+	
   /**
    * Options for this instance
    */
@@ -1026,6 +987,13 @@ protected:
        Used when *sending*
      */
     bool enable_output_filters;
+
+#if ENABLE_OPENSSL
+    /** Times out SSL receiving data. Some kind of bug in openSSL can leave SSL_read frozen and no information
+     * will come. Leaving the process
+     */
+    bool ssltimeout;
+#endif
   };
   /** Default options  */
   local_options  default_values;
@@ -1095,6 +1063,19 @@ protected:
    * Creates a string with the errno appended. Not thread safe! As errno isn't
    */
   static std::string append_errno(std::string message);
+
+	/**
+	 *
+	 */
+	static std::pair<uint32_t, uint32_t> getNetworkAndMask(const std::string cidr, bool notOnlyCIDR, bool noException);
+
+	/**
+	 *
+	 */
+	static int inet_pton4(const std::string addr, in_addr* result, bool noException=true);
+
+	static std::map<std::string, uint16_t> _additionalServices;
+
 };
 
 /**
@@ -1113,10 +1094,11 @@ public:
      * Client constructor.
      *
      * @param sockfd    Socket to use
+     * @param clientId  Internal client ID
      * @param ipaddress IP Address of this client
      * @param host      Host
      */
-    Client(Conn_description conn, std::string ipaddress, std::string host)
+    Client(Conn_description conn, unsigned clientId, std::string ipaddress, std::string host):clientId(clientId)
     {
       this->conn = conn;
       this->connectionInfo.ip_address = ipaddress;
@@ -1127,15 +1109,20 @@ public:
      * Client constructor
      *
      * @param sockfd    Socket to use
+     * @param clientId  Internal client ID
      * @param ipaddress IP Address of this client
      * @param host      Host
      * @param options   Default options for this client
      */
-    Client(Conn_description conn, std::string ipaddress, std::string host, local_options options):Client(conn, ipaddress, host)
+    Client(Conn_description conn, unsigned clientId, std::string ipaddress, std::string host, local_options options):Client(conn, clientId, ipaddress, host)
     {
       default_values = options;
     }
 
+		unsigned id() const
+		{
+			return clientId;
+		}
     /**
      * Send data !!
      *
@@ -1160,6 +1147,20 @@ public:
       return _receive_fixed(0, timeout, default_values.timeout_when_data, default_values.buffer_size, read_once, default_values.exceptions & EXCEPTION_TIMEOUT);
     }
 
+  	int receive2 (std::string& out, double timeout=-1, short read_once=-1)
+		{
+			out.clear();
+			try
+				{
+					out = _receive_fixed(0, timeout, default_values.timeout_when_data, default_values.buffer_size, read_once, true);
+				}
+			catch (GloveException& e)
+				{
+					return e.code();
+				}
+			return 0;
+		}
+
     /**
      * Receive a fixed amount of data from this client
      *
@@ -1172,8 +1173,18 @@ public:
     {
       return _receive_fixed(size, timeout, true, default_values.buffer_size, false, default_values.exceptions & EXCEPTION_TIMEOUT);
     }
-
+	private:
+		unsigned clientId;
   };
+
+  /**
+   * That's the filter function to be executed
+   * Possible returns:
+   *     > 0 : connection accepted
+   *     = 0 : current connection not affected by filter
+   *     < 0 : connection denied
+   */
+  using connection_filter_callback = std::function<int (const Glove* server, std::string ipAddress, std::string hostname, uint16_t remotePort, std::string data0, std::string data1, uint32_t data2, double data3)>;
 
   /**
    * That's a client callback (what we run when a client connects our server
@@ -1210,6 +1221,46 @@ public:
       /** Enable all flags  */
       SSL_FLAG_ALL             = 65535
     };
+
+  /**
+   * Connection Log State. Indicates whether the logged connection
+   * was accepted, denied and the reason of denegation
+   */
+  enum ConnectionLogState
+    {
+      CONNECTION_ACCEPTED,
+      ACCEPT_ERROR,
+			SSL_CONNECTION_ERROR,
+			SSL_ACCEPT_ERROR,
+      /* too many concurrent connections */
+      CONNECTION_DENIED_BY_TOO_MANY,
+      /* default policy is DENY ALL */
+      CONNECTION_DENIED_BY_POLICY,
+      /* connection denied by filter */
+      CONNECTION_DENIED_BY_FILTER,
+      /* unknowen cause. Don't know where to use it */
+      CONNECTION_DENIED_BY_OTHER
+    };
+
+  /**
+   * Stores basic information from the incoming connection.
+   * This information is collected before the worker callback
+   * is called, so it won't collect SSL negotiation data, or
+   * login, or so, just connection.
+   */
+  struct ConnectionLog
+  {
+    /** IP Address  */
+    std::string ipAddress;
+    /** Hostname, if resolution is enabled  */
+    std::string hostName;
+    /** Start time  */
+    time_point start;
+    /** Connection state  */
+    ConnectionLogState state;
+    /** If connection was denied by filter, this is the filter ID  */
+    uint32_t filter; 
+  };
   /**
    * A server error callback. What we run when there is a problem with a client
    *
@@ -1432,6 +1483,10 @@ public:
    */
   bool is_connected();
 
+  unsigned totalHits()
+  {
+    return clientId;
+  }
   // options getters/setters
   /**
    * Setter for shutdown_on_destroy_option
@@ -1465,6 +1520,77 @@ public:
   {
     return clients_connected;
   }
+
+  /**
+   * Debug Logged Connections. Extract a string with a list
+   * of logged connections with dates, IPs and states
+   */
+  std::string debugLoggedConnections();
+
+  uint32_t countLoggedConnections()
+  {
+    return connections_logged.size();
+  }
+
+  std::deque<ConnectionLog> getLoggedConnections()
+  {
+    return connections_logged;
+  }
+
+  /* TO DOC */
+  bool getLoggedConnection(ConnectionLog& cl, uint32_t id)
+  {
+    try 
+      {
+	cl = connections_logged.at(id);
+	return true;
+      }
+    catch (const std::out_of_range& oor) 
+      {
+	return false;
+      }
+  }
+
+  /**
+   * Too Many Connections Response Message. This will be sent
+   * if someone tries to connect when the max_accepted_clients
+   * is reached.
+   * This will enable reject_connections
+   *
+   * @param msg Message to return
+   */
+  void tmcRejectMessage(std::string msg);
+
+  /**
+   * Too Many Connections Response Callback. This will be called
+   * if someone tries to connect when the max_accepted_clients
+   * is reached.
+   * This will enable reject_connections
+   *
+   * @param cb function to call. This function must return a string message
+   *           to be sent to the user.
+   */
+  void tmcRejectCallback(std::function <std::string (Client* c)> cb);
+
+  /**
+   * Disables reject message for client connections when there are
+   * too many
+   */
+  void tmcRejectDisable();
+
+  void addConnectionFilter(connection_filter_callback cb, std::string data0="", std::string data1="", uint32_t data2 =0, double data3 =0);
+
+  void deleteConnectionFilter(uint32_t filterId);
+
+  void serverAllowIp(std::string cidr);
+  void serverDisallowIp(std::string cidr);
+
+  void serverDisallowFastConnection(double time, uint32_t connections);
+
+  /* Hay que hacer métodos para aceptar y denegar rangos de IP */
+  /* Un filtro más para denegar una conexión si viene en menos de X tiempo, para
+   eso, el incoming log debe estar activado y se consultarán las últimas conexiones */
+  
 #if ENABLE_OPENSSL
   /**
    * Get SSL Verify state. But with some things more
@@ -1607,6 +1733,42 @@ public:
    */
   option_conf(server_options, bool, copy_options);
 
+  // declares bool incoming_log([bool])
+  /**
+   * Getter/Set incoming_log server option
+   *
+   * bool incoming_log(bool newVal);
+   * bool incoming_log();
+   */
+  option_conf(server_options, bool, incoming_log);
+
+  // declares bool reject_connections([bool])
+  /**
+   * Getter/Set reject_connections server option
+   *
+   * bool reject_connections(bool newVal);
+   * bool reject_connections();
+   */
+  option_conf(server_options, bool, reject_connections);
+
+  // declares bool wait_before_reject_connection([bool])
+  /**
+   * Getter/Set wait_before_reject_connection server option
+   *
+   * bool wait_before_reject_connection(bool newVal);
+   * bool wait_before_reject_connection();
+   */
+  option_conf(server_options, double, wait_before_reject_connection);
+
+  // declares uint8_t default_conn_policy([bool])
+  /**
+   * Getter/Set default_conn_policy server option
+   *
+   * bool default_conn_policy(bool newVal);
+   * bool default_conn_policy();
+   */
+  option_conf(server_options, uint8_t, default_conn_policy);
+
 #if ENABLE_OPENSSL
   /**
    * Getter and setter for SSL Method
@@ -1652,10 +1814,18 @@ public:
 protected:
   // static timeval as_timeval ( double seconds );
   bool connect_nonblocking ( const sockaddr *saptr, socklen_t salen, const double timeout);
-  void create_worker(client_callback cb);
+  bool create_worker(client_callback cb);
+	bool shutdown_client(Conn_description& client_conn);
   void launch_client(client_callback cb, Client *c, Conn_description client_conn, unsigned client_id);
   bool test_connected();
   void fill_connection_info(addrinfo* rp, int port);
+  /* logs connection in local log and rotates list */
+  void logConnection(std::string ipAddress, std::string hostName, ConnectionLogState state, uint32_t filterId=0);
+  unsigned getTotalConnectedClients()
+  {
+    return clients_connected.size();
+  }
+  void serverRejectConnection();
 #if ENABLE_OPENSSL
   /**
    * Initializes ssl_options with default values
@@ -1666,12 +1836,13 @@ protected:
    * Performs SSL client handshake
    * This method is *only present if ENABLE_OPENSSL is defined
    *
+	 * @param host host name for SNI
    * @param exception_on_handshake_failure self-explanatory
    *
    * @return true if connected, false if don't (but if the exception is enabled,
    *         it will return always TRUE).
    */
-  bool SSLClientHandshake(bool exception_on_handshake_failure=true);
+  bool SSLClientHandshake(std::string host, bool exception_on_handshake_failure=true);
 
   /**
    * Initialize openSSL
@@ -1683,6 +1854,12 @@ protected:
    * and loads certificates. All the dirty work
    */
   void SSLServerInitialize();
+
+  /**
+   * Gets desired SSL client Method to connect a server.
+   * This can be configured later
+   */
+  const SSL_METHOD* getSSLServerMethod();
 
   /**
    * Gets desired SSL client Method to connect a server.
@@ -1727,13 +1904,43 @@ protected:
     unsigned accept_wait;
     // copy default options to clients
     bool copy_options;
+    // incoming connection log. Defaults to true
+    bool incoming_log;
+    // reject incoming connections when clients connected are max_accepted_clients. Defaults false
+    bool reject_connections;
+    // max time to wait before rejecting the connection. Defaults 0
+    double wait_before_reject_connection;
+    // default connection policy ( 0 - deny, !=0 - accept ). Defaults 1
+    uint8_t default_conn_policy;
   } server_options;
 
+  /* We may use variant types but I won't use it anywhere else (now) */
+  struct ConnectionFilter
+  {
+    connection_filter_callback cb;
+    std::string data0;
+    std::string data1;
+    uint32_t data2;
+    double data3;
+  };
   server_error_callback_t _server_error_callback;
 
   // multiple clients
   bool accept_clients;
   std::map <unsigned, Client*> clients_connected;
+  // this vector stores information about connection times
+  std::deque<ConnectionLog> connections_logged;
+  unsigned maxConnectionsBuffer;
+  /* this map includes filters for incoming connections:
+  * client restrictions
+  * ip restrictions
+  * time restrictions
+  * and user defined function for future restrictions */
+  std::map <unsigned, ConnectionFilter> connection_filters;
+  /**
+   * Too many connections reject callback
+   */
+  std::function <std::string (Client* c)> tmcRejectCb;
   std::mutex clients_connected_mutex;
   unsigned clientId;
 };

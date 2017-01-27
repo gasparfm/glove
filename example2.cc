@@ -80,13 +80,24 @@ int main(int argc, char *argv[])
   try
     {
       cout << g.buffer_size(123)<<endl;
+      g.max_accepted_clients(10);
+      g.accept_wait(2000);
       g.server_error_callback(errorh);
+      g.reject_connections(true);
+      g.wait_before_reject_connection(2.9);
+      g.tmcRejectMessage("Lo siento, hay muchos");
+      /* g.serverDisallowIp("192.168.0.0/24"); */
+      /* g.serverDisallowFastConnection(10, 2); */
+      g.serverAllowIp("192.168.0.0/24");
+      g.default_conn_policy(0);
       g.listen(8080, recibo, "", 1);
       cout << "END" << endl;
 
       while(1)
 	{
 	  this_thread::sleep_for(chrono::seconds(1));
+	  cout << "Clients connected: "<<g.get_connected_clients().size()<<endl;
+	  cout << g.debugLoggedConnections()<<endl;
 	}
     } 
   catch (GloveException &e)

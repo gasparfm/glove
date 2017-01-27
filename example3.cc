@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
       	{
       	  cout << "HOST: "<<i->host<<"; IP: "<<i->ip_address<<endl;
       	}
-
+      //      g.set_ssltimeout(false);
       g.connect(argv[1], 443);
       g.send("GET / HTTP/1.1\r\n");
       g.send("Host: ");
