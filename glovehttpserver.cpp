@@ -1305,6 +1305,29 @@ std::string GloveHttpServer::versionString()
   return GHS_VERSION_STR;
 }
 
+void GloveHttpServer::tmcReject(bool enabled)
+{
+	this->server->reject_connections(enabled);
+	if (enabled)
+		{
+			this->server->wait_before_reject_connection(5); /* default value */
+			this->server->tmcRejectMessage("Too many connections!");
+		}
+}
+
+void GloveHttpServer::tmcReject(bool enabled, double time, std::string message)
+{
+	this->server->reject_connections(enabled);
+	this->server->wait_before_reject_connection(time);
+	this->server->tmcRejectMessage(message);
+}
+
+void GloveHttpServer::tmcReject(double time, std::string message)
+{
+	tmcReject(true, time, message);
+}
+
+
 std::string GloveHttpServer::unknownMimeType(std::string nmt)
 {
   if (!nmt.empty())
