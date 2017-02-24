@@ -46,11 +46,11 @@ void chatreceive(GloveWebSocketData& data, GloveWebSocketHandler& ws)
 		ws.send("ECHO: "+data.data());
 	/* ws.ping("PINGIO", [] (GloveWebSocketHandler& ws) */
 	/* 				{ */
-	/* 					std::cout << "SE EJECUTA EL CALLBACK Y TODO\n"; */
+	/* 					std::cout << "EXECUTING CALLBACK\n"; */
 	/* 				}); */
 }
 
-void chatmaintenance(GloveWebSocketHandler& ws)
+bool chatmaintenance(GloveWebSocketHandler& ws)
 {
 }
 
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 	/* Necesitamos callback de inicializacion (chatengine), de recepcion de mensaje, de salida de cliente y de mantenimiento (que se llamara cada cierto tiempo).
 
 	 Mirar si desde client podemos acceder a un ID.*/
-  serv.addWebSocket("/chat/", chatengine, chatreceive, chatmaintenance);
+  serv.addWebSocket("/chat/", chatengine, nullptr, chatreceive, chatmaintenance);
   serv.addRoute("/hello/$anycon/$anything", hello);
   serv.addRoute("/files/$filename/", GloveHttpServer::fileServer, "testing");
   std::cout << "READY"<<std::endl;
