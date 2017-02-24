@@ -16,6 +16,7 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog
+*  20170131 : - OpenSSL initialization is *not* thread safe. Added a little mutex
 *  20170127 : - sets tlsext_host_name when connecting with SSL. (SNI support!!)
 *  20161007 : - bug fixed parsing URI arguments
 *  20161004 : - minor bugs to free resources when closing unfinished connections
@@ -1414,6 +1415,9 @@ void Glove::initializeOpenSSL()
 {
   if (!openSSLInitialized)
     {
+			static std::mutex init_mutex;
+			std::lock_guard<std::mutex> lock(init_mutex);
+			
       SSL_library_init();
 #if GLOVEDEBUG > 0
       SSL_load_error_strings();

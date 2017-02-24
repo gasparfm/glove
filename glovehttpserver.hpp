@@ -436,6 +436,11 @@ public:
 	{
 		return defaultVhostName;
 	}
+
+	/* Reject on too many connections */
+	void tmcReject(bool enabled);
+	void tmcReject(bool enabled, double time, std::string message);
+	void tmcReject(double time, std::string message);
   /* get stats */
   /* Gets number of connections */
   unsigned connectionHits()
