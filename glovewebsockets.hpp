@@ -1,5 +1,11 @@
 #pragma once
 
+#if ENABLE_WEBSOCKETS
+#   include "glovewebsockets.hpp"
+#endif
+
+#if ENABLE_WEBSOCKETS
+
 #include <string>
 #include <chrono>
 #include "glove.hpp"
@@ -145,3 +151,5 @@ private:
 	double _latency;
 	std::chrono::time_point<std::chrono::steady_clock> temp_start;
 };
+
+#endif

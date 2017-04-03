@@ -57,6 +57,7 @@ namespace
     "0123456789+/";
 
 	static const std::string hex_chars = "ABCDEF0123456789";
+	static const std::string hex_charsL = "abcdef0123456789";	
 
   static inline bool is_base64(unsigned char c, bool newline=true) {
     return (!newline)?(isalnum(c) || (c == '+') || (c == '/') ):
@@ -230,17 +231,31 @@ namespace GloveCoding
 		return ret;
 	}
 
-	std::string randomHex(unsigned int chars)
+	std::string randomHex(unsigned int chars, bool lowerCase)
 	{
 		std::string out;
 		while (chars--)
 			{
-				out+=hex_chars[rand()%16];
+				if (lowerCase)
+					out+=hex_charsL[rand()%16];
+				else
+					out+=hex_chars[rand()%16];
 			}
 		
 		return out;		
 	}
 
+	std::string randomBase64(unsigned int chars)
+	{
+		std::string out;
+		while (chars--)
+			{
+				out+=base64_chars[rand()%64];
+			}
+		
+		return out;				
+	}
+	
 	const std::string qp_decode(const char *src)
 	{
 		const size_t len = std::string(src).length();

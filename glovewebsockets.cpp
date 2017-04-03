@@ -37,6 +37,9 @@
 *************************************************************/
 
 #include "glovewebsockets.hpp"
+
+#if ENABLE_WEBSOCKETS
+
 #include <netinet/in.h>
 
 /* Process Web Socket Frame. Extracted from RFC6455:
@@ -297,3 +300,5 @@ void GloveWebSocketHandler::close(uint16_t closeCode, std::string closeMessage)
 	GloveWebSocketFrame f(GloveWebSocketFrame::TYPE_CLOSE, data, true, false);
 	_client << f.raw();
 }
+
+#endif

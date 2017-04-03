@@ -11,14 +11,21 @@
 #include <vector>
 #include <sstream>
 #include <functional>
-#include "glovewebsockets.hpp"
 
 /** Glove Http Server Version (numeric)  */
 #define GHS_VERSION 0003001
 /** Glove Http Server Version (string)  */
-#define GHS_VERSION_STR "0.3.1"
+#define GHS_VERSION_STR "0.3.3"
 
 #define GLOVEHTTP_KEEPALIVE_DEFAULT_TIMEOUT 5
+
+#ifndef DEFAULT_SESSION_TIMEOUT
+#   define DEFAULT_SESSION_TIMEOUT 86400
+#endif
+
+#ifndef DEFAULT_SESSION_ENTRIES
+#   define DEFAULT_SESSION_ENTRIES 1000
+#endif
 
 /**
  * By default enable openssl. This compiles glove with SSL support
@@ -28,8 +35,50 @@
 #   define ENABLE_COMPRESSION 1
 #endif
 
-class GloveHttpServer;
+#ifndef ENABLE_WEBSOCKETS
+#   define ENABLE_WEBSOCKETS 1
+#endif
 
+#if ENABLE_WEBSOCKETS
+#   include "glovewebsockets.hpp"
+#endif
+
+class GloveHttpServer;
+class GloveHttpResponse;
+
+/* Manages key-values to handle session or user information */
+class GloveSessionRepository
+{
+public:
+	GloveSessionRepository();
+	virtual ~GloveSessionRepository();
+	
+	void insert(const std::string key, const std::string& value, time_t timeout=0);
+	bool remove(const std::string& key);
+	bool get(const std::string& key, std::string& value);
+	bool pop(const std::string& key, std::string& value);
+	
+	uint64_t maxEntries(uint64_t val);
+	uint64_t maxEntries();
+
+	time_t defaultTimeout(time_t val);
+	time_t defaultTimeout();
+
+	void debug();
+protected:
+	void clearTimeouts();
+	void clearOldEntries(uint64_t howmany);
+	
+private:
+	struct sessionInfo_t
+	{
+		time_t creation, timeout;
+		std::string data;
+	};
+	std::map<std::string, sessionInfo_t> storage;
+	uint64_t _maxEntries;
+	time_t _defaultTimeout;
+};
 
 /** Glove Http Request  */
 class GloveHttpRequest
@@ -64,10 +113,14 @@ public:
   std::string getEncoding() const;
   std::map<std::string, std::string>& getHeaders() const;
   std::string getHeader(std::string h) const;
+	std::string getAuthType() const;
+	std::string getAuthUser() const;
 	bool connectionIs(std::string what);
   std::string getVhost();
   GloveBase::uri getUri() const;
-  
+	bool auth(GloveHttpResponse& response, std::function<int(GloveHttpRequest&, GloveHttpResponse&)> authFunc, const std::string& authTypes, const std::string& realm="Access denied");
+	bool checkPassword(const std::string& password);
+	
   inline GloveHttpServer* server() const
   {
     return srv;
@@ -98,12 +151,16 @@ private:
   std::string method;
   std::string raw_location, location;
   std::string data;
+	std::string authType;
 	std::vector<std::string> connectionHeader;
 	std::map<std::string, std::string> gloveData;
   std::map<std::string, std::string> headers;
   std::map<std::string, std::string> urlencoded_data;
   void parseContentType(const std::string& method);
-  std::string getAuthData();
+  std::string getAuthData(const std::string& raw_location);
+	bool checkPasswordBasicAuth(const std::string& password);
+	bool checkPasswordDigestAuth(const std::string& password);
+	static bool checkDigestAuth(std::string& address, std::string& path, std::map<std::string, std::string>& data, std::string& username);
 };
 
 namespace
@@ -122,7 +179,7 @@ public:
   GloveHttpResponse(std::string contentType);
   ~GloveHttpResponse();
 
-  void clear();
+  void clear(bool clearHeaders=true);
   void send(GloveHttpRequest &request, Glove::Client &client);
 	int applyCompression(GloveHttpRequest &request, std::vector<std::string>& compression);
   short file(std::string filename, bool addheaders=true, std::string contentType="");
@@ -258,9 +315,11 @@ private:
 };
 
 using _url_callback = std::function<void(GloveHttpRequest&, GloveHttpResponse&)>;
+#if ENABLE_WEBSOCKETS
 using _ws_accept_callback = std::function<void(GloveHttpRequest& data, GloveWebSocketHandler& ws)>;
 using _ws_receive_callback = std::function<void(GloveWebSocketData& data, GloveWebSocketHandler& ws)>;
 using _ws_maintenance_callback = std::function<bool (GloveWebSocketHandler& ws)>;
+#endif
 
 class GloveUriService
 {
@@ -286,6 +345,7 @@ public:
 	}
 };
 
+#if ENABLE_WEBSOCKETS
 class GloveUriWebSocketService : public GloveUriService
 {
 public:
@@ -350,6 +410,7 @@ private:
 	uint64_t _intervalsMaintenance;
 	uint64_t _fragmentation;
 };
+#endif
 
 /** Glove HTTP Uri: Uri control, verify if a request matches a given URL format  */
 class GloveHttpUri
@@ -383,10 +444,11 @@ class GloveHttpServer : public GloveHttpCommon
 {
 public:
   typedef _url_callback url_callback;
+	#if ENABLE_WEBSOCKETS
   typedef _ws_receive_callback ws_receive_callback;
   typedef _ws_accept_callback ws_accept_callback;
 	typedef _ws_maintenance_callback ws_maintenance_callback;
-	
+	#endif
   static const std::vector<std::string> StandardMethods;
 
   /* Server configuration */
@@ -416,8 +478,10 @@ public:
 	/* routes */
   void addRoute(std::string route, url_callback callback, std::string vhost=defaultVhostName, int maxArgs=-1, int minArgs=-1, std::vector<std::string> allowedMethods = StandardMethods, bool partialMatch=false);
   void addRoute(std::string route, url_callback callback, int maxArgs, int minArgs=-1, std::vector<std::string> allowedMethods = StandardMethods);
+  #if ENABLE_WEBSOCKETS
   void addWebSocket(std::string route, url_callback callback, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback=nullptr, ws_maintenance_callback closeCallback=nullptr,  std::string host=defaultVhostName, int maxArgs=-1, int minArgs=-1, bool partialMatch=false, url_callback normalhttp = nullptr);
   void addWebSocket(std::string route, url_callback callback, int maxArgs, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback=nullptr, ws_maintenance_callback closeCallback=nullptr, int minArgs=-1, bool partialMatch = false, url_callback normalhttp = nullptr);
+	#endif
   void addRest(std::string route, std::string host, int minArgs, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall=nullptr);
   void addRest(std::string route, int minArgs, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall=nullptr);
   void addRest(std::string route, std::string host, int minArgs, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall, url_callback get, url_callback post=nullptr, url_callback put=nullptr, url_callback patch=nullptr, url_callback delet=nullptr);
@@ -653,10 +717,12 @@ protected:
   }
   bool findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special);
   int clientConnection(Glove::Client &client);
+#if ENABLE_WEBSOCKETS
 	bool webSocketHandshake(Glove::Client& client, GloveHttpRequest& req);
 	/* Handshake for version 13 */
 	bool webSocket13Handshake(Glove::Client& client, GloveHttpRequest& req);
-	int doWebSockets(Glove::Client& client, GloveHttpUri* guri, GloveHttpRequest& request, GloveHttpResponse& response); 
+	int doWebSockets(Glove::Client& client, GloveHttpUri* guri, GloveHttpRequest& request, GloveHttpResponse& response);
+#endif
   int _receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout=0);
 
   void gloveError(Glove::Client &client, int clientId, GloveException &e);

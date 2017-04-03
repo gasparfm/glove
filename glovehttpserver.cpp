@@ -14,6 +14,13 @@
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20170403 : Directive ENABLE_WEBSOCKETS to compile with or without
+*             Websockets support
+*  20170403 : Helper methods auth(), checkPassword(), getAuthUser() for client
+*             callbacks
+*  20170401 : Digest Authentication Method
+*  20170330 : Basic Authentication Method
+*  20170327 : Response::clear adds clearHeaders argument. Default to true
 *  20170112 : std::cout removed
 *  20161004 : Minor connection bugs fixed
 *  20161003 : Fixed bug. Error 500 when compression not enabled.
@@ -87,6 +94,7 @@
 #include <string>
 #include <algorithm>
 #include <memory>
+#include <chrono>
 
 #if ENABLE_COMPRESSION
 #include "glovecompress.hpp"
@@ -134,6 +142,12 @@ const std::map<short, std::string> GloveHttpServer::_defaultMessages = {
 // Default vhost name (internal setting)
 const std::string GloveHttpServer::defaultVhostName = "%";
 
+namespace
+{
+	/* Digest password repository */
+	GloveSessionRepository digestAuthInfo;
+};
+
 GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, int error, std::string method, std::string raw_location, std::string data, std::map<std::string, std::string> httpheaders, int serverPort):
   srv(server), c(c), error(error), raw_location(raw_location), method(method), data(data), headers(httpheaders)
 {
@@ -145,7 +159,7 @@ GloveHttpRequest::GloveHttpRequest(GloveHttpServer* server, Glove::Client *c, in
   if (thishost.empty())
     thishost = c->get_address(true)+":"+std::to_string(serverPort);
 
-  std::string auth = getAuthData();
+  std::string auth = getAuthData(raw_location);
   uri = GloveBase::get_from_uri(service+((auth.empty())?"":auth+"@")+thishost+raw_location);
   parseContentType(method);
 
@@ -340,19 +354,75 @@ void GloveHttpRequest::parseContentType(const std::string& method)
     }
 }
 
-std::string GloveHttpRequest::getAuthData()
+std::string GloveHttpRequest::getAuthData(const std::string& raw_location)
 {
   auto auth = headers.find("Authorization");
   if (auth == headers.end())
     return "";
 
-  std::string authtype = auth->second.substr(0,auth->second.find(' '));
-  if (authtype=="Basic")
+	auto space = auth->second.find(' ');
+	if (space == std::string::npos)
+		return "";
+  authType = auth->second.substr(0, space);
+	auto authData = auth->second.substr(space+1);
+  if (authType=="Basic")
     {
-      return GloveCoding::base64_decode(auth->second.substr(auth->second.find(' ')+1));
+      return GloveCoding::base64_decode(authData);
     }
+	else if (authType=="Digest")
+		{
+			auto _digestData = tokenize(authData, ",", defaultTrim);
+			auto digestData = mapize(_digestData, "=", defaultTrim);
+
+			std::string address= c->get_address(true);
+			std::string username;
+			/* Must strip arguments */
+			std::string path = raw_location;
+			auto ok = checkDigestAuth(address, path, digestData, username);
+			if (ok)
+				{
+					authData=GloveCoding::base64_encode((const unsigned char*)authData.c_str(), authData.length());
+
+					return username+":"+authData;
+				}
+			else
+				return "", authType="None";
+		}
   else				// Not implemented
-    return "";
+		{
+			authType = "None";
+			return "";
+		}
+}
+
+bool GloveHttpRequest::checkDigestAuth(std::string& address, std::string& path, std::map<std::string, std::string>& data, std::string& username)
+{
+	auto nonce = unquote(data["nonce"], "\"", "\\");
+	auto response = unquote(data["response"], "\"", "\\");
+	auto algo = unquote(data["algorithm"], "\"", "\\");
+	auto cnonce = unquote(data["cnonce"], "\"", "\\");
+	auto nc = unquote(data["nc"], "\"", "\\");
+	auto opaque = unquote(data["opaque"], "\"", "\\");
+	auto realm = unquote(data["realm"], "\"", "\\");
+	auto uri=  unquote(data["uri"], "\"", "\\");
+	auto _username = unquote(data["username"], "\"", "\\");
+	
+	if (uri != path) {
+		std::cout<<"PATH MALO: "<<uri<<" *" <<path<<"*\n";
+		return false;								/* Path does not match */
+	}
+	if (algo.empty())
+		algo="MD5";
+	if ( (algo != "MD5") && (algo!="MD5-sess") ) {
+		return false;								/* Wrong algorithm */
+	}
+	std::string address2;
+	if (digestAuthInfo.pop(nonce+opaque+uri, address2))
+		{
+			return false;							/* Auth info not found */
+		}
+	username = _username;
+	return true;
 }
 
 std::string GloveHttpRequest::getMessage(std::string _template)
@@ -364,6 +434,254 @@ std::string GloveHttpRequest::getMessage(std::string _template)
 													{"{:method}", method }
 												});
   
+}
+
+bool GloveHttpRequest::auth(GloveHttpResponse& response, std::function<int(GloveHttpRequest&, GloveHttpResponse&)> authFunc, const std::string& authTypes, const std::string& realm)
+{
+	auto _authTypes = tokenize(authTypes, ",", defaultTrim);
+
+	if (std::find(_authTypes.begin(), _authTypes.end(), authType) != _authTypes.end())
+		{
+			if (authFunc(*this, response))
+				return true;
+			/* Check auth */
+		}
+
+		{
+			std::string extraArguments;
+			response.code(GloveHttpResponseCode::UNAUTHORIZED);
+			if (_authTypes[0] == "Digest")
+				{
+					/* SEGUIR POR AQUI */
+					std::string nonce = GloveCoding::randomHex(64, true);
+					std::string opaque= GloveCoding::randomHex(64, true);
+					std::string address= c->get_address(true);
+					std::string info = uri.rawpath;
+					/* digestAuthInfo.maxEntries(4); */
+					/* digestAuthInfo.defaultTimeout(10); */
+					digestAuthInfo.insert(nonce+opaque+address, info);
+					/* digestAuthInfo.debug(); */
+					
+					extraArguments+=", nonce="+quote(nonce, "\"", "\\")+", qop="+quote("auth,auth-int", "\"", "\\")+", algorithm=MD5, opaque="+quote(opaque, "\"", "\\")+", domain=\"/private/ http://mirror.my.dom/private2/\"";
+				}
+			response.header("WWW-Authenticate", _authTypes[0]+" realm="+quote(realm, "\"", "\\")+extraArguments);
+
+			return false;
+		}
+}
+
+std::string GloveHttpRequest::getAuthType() const
+{
+	return authType;
+}
+
+std::string GloveHttpRequest::getAuthUser() const
+{
+	if (authType == "None")
+		return "";
+
+	return uri.username;
+}
+
+bool GloveHttpRequest::checkPassword(const std::string& password)
+{
+	if (authType == "Basic")
+		return checkPasswordBasicAuth(password);
+	else if (authType == "Digest")
+		return checkPasswordDigestAuth(password);
+
+	return false;
+}
+
+bool GloveHttpRequest::checkPasswordBasicAuth(const std::string& password)
+{
+	return ( (uri.password.length()>0) && (password== uri.password) );
+}
+
+bool GloveHttpRequest::checkPasswordDigestAuth(const std::string& password)
+{
+	if (uri.password.empty())
+		return false;
+
+	auto authData = GloveCoding::base64_decode(uri.password);
+	auto _digestData = tokenize(authData, ",", defaultTrim);
+	auto digestData = mapize(_digestData, "=", defaultTrim);
+
+	auto nonce = unquote(digestData["nonce"], "\"", "\\");
+	auto response = unquote(digestData["response"], "\"", "\\");
+	auto algo = unquote(digestData["algorithm"], "\"", "\\");
+	auto cnonce = unquote(digestData["cnonce"], "\"", "\\");
+	auto nc = unquote(digestData["nc"], "\"", "\\");
+	auto realm = unquote(digestData["realm"], "\"", "\\");
+	auto uri=  unquote(digestData["uri"], "\"", "\\");
+	auto qop=  unquote(digestData["qop"], "\"", "\\");
+	auto method = getMethod();
+
+	std::string HA1,HA2, resp;
+
+	if (algo == "MD5")
+		HA1= GloveCoding::md5_hex(this->uri.username+":"+realm+":"+password);
+	else if (algo == "MD5-sess")
+		HA1= GloveCoding::md5_hex(GloveCoding::md5_hex(this->uri.username+":"+realm+":"+password)+":"+nonce+":"+cnonce);
+	else
+		return false;								/* Bad algorithm. We will never do that because of checkDigestAuth restriction, */
+
+	if (qop==  "auth-int")
+		HA2 = GloveCoding::md5_hex(method+":"+uri+":"+GloveCoding::md5_hex(getData()));
+	else
+		HA2 = GloveCoding::md5_hex(method+":"+uri);
+
+	if ( (qop == "auth") || (qop == "auth-int") )
+		resp = GloveCoding::md5_hex(HA1+":"+nonce+":"+nc+":"+cnonce+":"+qop+":"+HA2);
+  else if (qop.empty())
+		resp = GloveCoding::md5_hex(HA1+":"+nonce+":"+HA2);
+	else
+		return false;
+	
+	return (response == resp);
+}
+
+GloveSessionRepository::GloveSessionRepository()
+{
+	_defaultTimeout = DEFAULT_SESSION_TIMEOUT;
+	_maxEntries = DEFAULT_SESSION_ENTRIES;
+}
+
+GloveSessionRepository::~GloveSessionRepository()
+{
+}
+
+void GloveSessionRepository::clearTimeouts()
+{
+	time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+
+	for (auto entry=storage.begin(); entry != storage.end(); )
+		{
+			if (entry->second.creation + entry->second.timeout < now)
+				entry = storage.erase(entry);
+			else
+				++entry;
+		}
+}
+
+void GloveSessionRepository::clearOldEntries(uint64_t howmany)
+{
+	uint64_t deleted = 0;
+	std::vector<std::map<std::string, GloveSessionRepository::sessionInfo_t>::iterator> toDelete;
+	
+	auto doInsert = [&](const std::map<std::string, GloveSessionRepository::sessionInfo_t>::iterator& entry)
+		{
+			bool inserted = false;
+			for (auto ent = toDelete.begin(); ent != toDelete.end(); ++ent)
+				{
+					if (entry->second.creation < (*ent)->second.creation)
+						{
+							toDelete.insert(ent, entry);
+							inserted = true;
+							break;
+						}
+				}
+			if ( (!inserted) && (toDelete.size()<howmany) )
+				{
+					toDelete.push_back(entry);
+				}
+			else if (toDelete.size()>howmany)
+				{
+					for (auto i=toDelete.begin()+howmany-1; i != toDelete.end(); ++i)
+						toDelete.erase(i);
+				}
+		};
+	auto tryInsert = [toDelete,howmany,doInsert](const std::map<std::string, GloveSessionRepository::sessionInfo_t>::iterator& entry)
+		{
+			auto currentSize = toDelete.size();
+			if ( (currentSize<howmany) || (entry->second.creation < (*toDelete.rbegin())->second.creation))
+				doInsert(entry);
+
+		};
+	
+	for (auto entry=storage.begin(); entry != storage.end(); ++entry)
+		{
+			tryInsert(entry);
+		}
+	for (auto entry=toDelete.begin(); entry != toDelete.end(); ++entry)
+		storage.erase(*entry);
+}
+
+void GloveSessionRepository::insert(const std::string key, const std::string& value, time_t timeout)
+{
+	if (timeout==0)
+		timeout = _defaultTimeout;
+
+	time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+	if (storage.size()>=_maxEntries)
+		clearTimeouts();
+
+	if (storage.size()>=_maxEntries)
+		clearOldEntries(_maxEntries-storage.size()+1);
+	
+	storage[key] = { now, timeout, value };
+}
+
+bool GloveSessionRepository::remove(const std::string& key)
+{
+	auto el = storage.find(key);
+	if (el == storage.end())
+		return false;
+
+	storage.erase(el);
+}
+
+bool GloveSessionRepository::get(const std::string& key, std::string& value)
+{
+	auto el = storage.find(key);
+	if (el == storage.end())
+		return false;
+
+	value = el->second.data;
+	return true;
+}
+
+bool GloveSessionRepository::pop(const std::string& key, std::string& value)
+{
+	auto el = storage.find(key);
+	if (el == storage.end())
+		return false;
+
+	value = el->second.data;
+	storage.erase(el);
+	return true;
+	
+}
+
+uint64_t GloveSessionRepository::maxEntries(uint64_t val)
+{
+	_maxEntries = val;
+	return _maxEntries;
+}
+
+uint64_t GloveSessionRepository::maxEntries()
+{
+	return _maxEntries;
+}
+
+time_t GloveSessionRepository::defaultTimeout(time_t val)
+{
+	_defaultTimeout = val;
+	return _defaultTimeout;
+}
+
+time_t GloveSessionRepository::defaultTimeout()
+{
+	return _defaultTimeout;
+}
+
+void GloveSessionRepository::debug()
+{
+	for (auto info : storage)
+		{
+			std::cout << " --NAME: "<<info.first<<"; CREATED="<<info.second.creation<<"; TIMEOUT="<<info.second.timeout<<";\n";
+			std::cout << "   DATA : "<<info.second.data<<"\n\n";
+		}
 }
 
 GloveHttpResponse::GloveHttpResponse(std::string contentType):_contentType(contentType),_responseCode(GloveHttpResponseCode::OK),compression(true)
@@ -490,9 +808,10 @@ short GloveHttpResponse::file(std::string filename, bool addheaders, std::string
   return GloveHttpErrors::ALL_OK;
 }
 
-void GloveHttpResponse::clear()
+void GloveHttpResponse::clear(bool clearHeaders)
 {
-	headers.clear();
+	if (clearHeaders)
+		headers.clear();
   output.clear();								/* Clears error flags */
 	output.str("");
 }
@@ -599,7 +918,7 @@ std::string GloveHttpServer::serverSignature(GloveHttpRequest& req)
   return string_replace(_serverSignature,
 												{
 													{"{:serverHost}", req.getUri().host},
-														{"{:serverPort}", std::to_string(port)}
+													{"{:serverPort}", std::to_string(port)}
 												});
 }
 
@@ -788,6 +1107,7 @@ std::string GloveHttpServer::defaultContentType(std::string dct)
   return _defaultContentType;
 }
 
+#if ENABLE_WEBSOCKETS
 void GloveHttpServer::addWebSocket(std::string route, url_callback callback, ws_accept_callback acceptCallback, ws_receive_callback receiveCallback, ws_maintenance_callback maintenanceCallback, ws_maintenance_callback closeCallback, std::string host, int maxArgs, int minArgs, bool partialMatch, url_callback normalhttp)
 {
   auto vhost = getVHost(host);
@@ -810,6 +1130,7 @@ void GloveHttpServer::addWebSocket(std::string route, url_callback callback, int
 {
 	addWebSocket(route, callback, acceptCallback, receiveCallback, maintenanceCallback, closeCallback, defaultVhostName, maxArgs, minArgs, partialMatch, normalhttp);
 }
+#endif
 
 void GloveHttpServer::addRoute(std::string route, url_callback callback, std::string host, int maxArgs, int minArgs, std::vector<std::string> allowedMethods, bool partialMatch)
 {
@@ -1130,8 +1451,10 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 					GloveHttpUri *guri;
 					if (findRoute(*vhost, request_method, request.getUri(), guri, request.special))
 						{
+							#if ENABLE_WEBSOCKETS
 							if ((guri->mission().name()=="websocket") && (webSocketHandshake(client, request)) )
 								return doWebSockets(client, guri, request, response);
+							#endif
 							guri->callAction(request, response);
 						}
 					else
@@ -1161,6 +1484,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
     } while (!finished);
 }
 
+#if ENABLE_WEBSOCKETS
 bool GloveHttpServer::webSocketHandshake(Glove::Client& client, GloveHttpRequest& req)
 {
 	/* Header "Connection: Upgrade"
@@ -1271,6 +1595,7 @@ int GloveHttpServer::doWebSockets(Glove::Client& client, GloveHttpUri* guri, Glo
 	ws.close(handler);
 	return 0;
 }
+#endif
 
 void GloveHttpServer::applyProcessors(VirtualHost* vhost, GloveHttpRequest& request, GloveHttpResponse& response, int code)
 {
@@ -1374,16 +1699,16 @@ std::string GloveHttpServer::getMimeType(std::string extension)
 
 void GloveHttpServer::responseGenericError(GloveHttpRequest& request, GloveHttpResponse& response)
 {
-  response.clear();
+  response.clear(false);
   std::string msg = response.responseVar("errorMessage");
   if (msg.empty())
     msg = request.server()->responseMsg(MESSAGE_NOTFOUND);
   response << string_replace(request.server()->autoResponses(request.getVhost(), GloveHttpServer::RESPONSE_ERROR),
 														 {
 															 {"{:title}", std::to_string(response.code())+" "+response.responseMessage()},
-																 {"{:header}", response.responseMessage()},
-																	 {"{:message}", request.getMessage(msg)},
-																		 {"{:signature}",request.server()->serverSignature(request)}
+															 {"{:header}", response.responseMessage()},
+															 {"{:message}", request.getMessage(msg)},
+															 {"{:signature}",request.server()->serverSignature(request)}
 														 });
 }
 
@@ -1399,7 +1724,7 @@ void GloveHttpServer::response4XXProcessor(GloveHttpRequest& request, GloveHttpR
 
 void GloveHttpServer::response404Processor(GloveHttpRequest& request, GloveHttpResponse& response)
 {
-  response.clear();
+  response.clear(false);
   response << string_replace(request.server()->autoResponses(request.getVhost(), GloveHttpServer::RESPONSE_ERROR),
 														 {
 															 {"{:title}", "404 Not Found"},

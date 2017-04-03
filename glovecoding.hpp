@@ -6,9 +6,11 @@
 #include "utils.hpp"
 #if ENABLE_OPENSSL
 #include <openssl/sha.h>
+#include <openssl/md5.h>
 #include "sha1.hpp"
 #else
 #include "sha1.hpp"
+#include "md5.hpp"
 #endif
 
 namespace
@@ -74,8 +76,11 @@ namespace GloveCoding
   std::string base64_decode(std::string const& s);
 
 	/* Puts random hexadecimal characters */
-	std::string randomHex(unsigned int chars);
+	std::string randomHex(unsigned int chars, bool lowerCase=false);
 
+	/* Puts random base64 characters */
+	std::string randomBase64(unsigned int chars);
+	
 	/**
 	 * Quoted-printable encode a string
 	 * Originally by Hiroshi Seki (https://github.com/rane-hs) but modified
@@ -167,7 +172,7 @@ namespace GloveCoding
 
 	const std::string qp_encode(const char *src);
 
-		static std::string bin2hex(const std::string& in)
+	static std::string bin2hex(const std::string& in)
 	{
     std::stringstream ss;
 
@@ -228,5 +233,30 @@ namespace GloveCoding
 	static std::string sha1_hex(std::string origin)
 	{
 		return bin2hex(sha1(origin));
+	}
+
+	static std::string md5(std::string origin)
+	{
+		/* openssl method is muuuuuuuuch faster */
+		#if ENABLE_OPENSSL
+		std::string hash(16, '\0');
+		MD5((const unsigned char*)origin.c_str(),
+				 origin.length(),
+				 (unsigned char*)&hash[0]);
+		return hash;
+		#else
+		Digest::MD5 md5 = Digest::MD5(origin);
+    return md5.digest();
+		#endif
+	}
+
+	static std::string md5_b64(std::string origin)
+	{
+		return base64_encode((unsigned char*)md5(origin).c_str(), 16);
+	}
+
+	static std::string md5_hex(std::string origin)
+	{
+		return bin2hex(md5(origin));
 	}
 };
