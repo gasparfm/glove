@@ -11,6 +11,8 @@
 *    public domain code.
 *
 * Changelog
+*  20170401 : md5, random_base64, unescape, unquote
+*  20170328 : quote, escape and several string_replace overloads
 *  20160812 : - First release
 *
 * MIT Licensed:
@@ -53,6 +55,12 @@ namespace GloveDef
 	static std::string CRLF2= "\r\n\r\n";
 };
 
+namespace
+{
+  std::string _defaultStartDelimiter = ":";
+  std::string _defaultEndDelimiter = "";
+};
+
 static std::string trim( std::string str, const std::string& trimChars = GloveDef::white_spaces)
 {
 	if (str.empty())
@@ -72,62 +80,129 @@ static std::string defaultTrim( std::string str)
 
   // We could use regex but gcc 4.8 still hasn't implemented them.
   // gcc 4.9 finally can use regex, but I MUST do it compatible with 4.8
-  static std::string string_replace(std::string source, std::map<std::string,std::string>strMap, int offset=0, int times=0)
-  {
-    int total = 0;
-    std::string::size_type pos=offset;
-    std::string::size_type newPos;
-    std::string::size_type lowerPos;
+  /* static std::string string_replace(std::string source, std::map<std::string,std::string>strMap, int offset=0, int times=0) */
+  /* { */
+  /*   int total = 0; */
+  /*   std::string::size_type pos=offset; */
+  /*   std::string::size_type newPos; */
+  /*   std::string::size_type lowerPos; */
 
-    do
-      {
-				std::string rep;
-				for (auto i=strMap.begin(); i!=strMap.end(); ++i)
-					{
-						std::string fromStr = i->first;
+  /*   do */
+  /*     { */
+	/* 			std::string rep; */
+	/* 			for (auto i=strMap.begin(); i!=strMap.end(); ++i) */
+	/* 				{ */
+	/* 					std::string fromStr = i->first; */
+	/* 					newPos = source.find(fromStr, pos); */
+	/* 					if ( (i==strMap.begin()) || (newPos<lowerPos) ) */
+	/* 						{ */
+	/* 							rep = fromStr; */
+	/* 							lowerPos = newPos; */
+	/* 						} */
+	/* 				} */
 
-						newPos = source.find(fromStr, pos);
-						if ( (i==strMap.begin()) || (newPos<lowerPos) )
-							{
-								rep = fromStr;
-								lowerPos = newPos;
-							}
-					}
+	/* 			pos = lowerPos; */
+	/* 			if (pos == std::string::npos) */
+	/* 				break; */
 
-				pos = lowerPos;
-				if (pos == std::string::npos)
-					break;
+	/* 			std::string toStr = strMap[rep]; */
 
-				std::string toStr = strMap[rep];
+	/* 			source.replace(pos, rep.length(), toStr); */
+	/* 			pos+=toStr.size(); */
 
-				source.replace(pos, rep.length(), toStr);
-				pos+=toStr.size();
+  /*     } while ( (times==0) || (++total<times) ); */
 
-      } while ( (times==0) || (++total<times) );
+  /*   return source; */
+  /* } */
 
-    return source;
-  }
+static std::string string_replace(std::string source, std::string from, std::string to, int offset=0, int times=0)
+{
+	int total = 0;
+	std::string::size_type pos=offset;
 
-  /** Extract a whole file into a string */
-  static std::string extractFile(const char *filename, size_t bufferSize=512)
-  {
-    int fd = open(filename, O_RDONLY);
-    std::string output;
+	do
+		{
+			pos = source.find(from, pos);
+			if (pos == std::string::npos)
+				break;
 
-    if (fd==-1)
-      return "";		/* error opening */
+			source.replace(pos, from.length(), to);
+			pos+=to.size();
 
-    char *buffer = (char*)malloc(bufferSize);
-    if (buffer==NULL)
-      return "";		/* Can't allocate memory */
+		} while ( (times==0) || (++total<times) );
 
-    int datalength;
-    while ((datalength = read(fd, buffer, bufferSize)) > 0)
-      output.append(buffer, datalength);
+	return source;
+}
 
-    close(fd);
-    return output;
-  }
+static std::string string_replace(std::string source, std::map<std::string,std::string>strMap, int offset, int times, bool delimiters, std::string before, std::string after="")
+{
+	int total = 0;
+	std::string::size_type pos=offset;
+	std::string::size_type newPos;
+	std::string::size_type lowerPos;
+	std::string::size_type delsize;
+
+	if (strMap.size() == 0)
+		return source;
+
+	if (delimiters)
+		delsize = before.length() + after.length();
+
+	do
+		{
+			std::string rep;
+			for (auto i=strMap.begin(); i!=strMap.end(); ++i)
+				{
+					auto fromStr = i->first;
+					newPos = (delimiters)?
+						source.find(before + fromStr + after, pos):
+						source.find(fromStr, pos);
+					if ( (i==strMap.begin()) || (newPos<lowerPos) )
+						{
+							rep = fromStr;
+							lowerPos = newPos;
+						}
+				}
+
+			pos = lowerPos;
+			if (pos == std::string::npos)
+				break;
+
+			std::string toStr = strMap[rep];
+			source.replace(pos, rep.length()+((delimiters)?delsize:0), toStr);
+			pos+=toStr.size();
+
+		} while ( (times==0) || (++total<times) );
+
+	return source;
+}
+
+static std::string string_replace(std::string source, std::map<std::string,std::string>strMap, int offset=0, int times=0, bool delimiters=false)
+{
+	return (delimiters)?string_replace(source, strMap, offset, times, delimiters, _defaultStartDelimiter, _defaultEndDelimiter):
+		string_replace(source, strMap, offset, times, delimiters, "");
+}
+
+/** Extract a whole file into a string */
+static std::string extractFile(const char *filename, size_t bufferSize=512)
+{
+	int fd = open(filename, O_RDONLY);
+	std::string output;
+
+	if (fd==-1)
+		return "";		/* error opening */
+
+	char *buffer = (char*)malloc(bufferSize);
+	if (buffer==NULL)
+		return "";		/* Can't allocate memory */
+
+	int datalength;
+	while ((datalength = read(fd, buffer, bufferSize)) > 0)
+		output.append(buffer, datalength);
+
+	close(fd);
+	return output;
+}
 
   // Gets file extension
   static std::string fileExtension(std::string fileName)
@@ -195,6 +270,30 @@ static std::vector<std::string> tokenize(const std::string& str,
 	return tokens;
 }
 
+static std::map<std::string, std::string> mapize(std::vector<std::string> elements, std::string separator=":", std::function<std::string (std::string)> callback = nullptr)
+{
+	std::map<std::string, std::string> out;
+	
+	for (auto el : elements)
+		{
+			auto seppos = el.find(separator);
+			std::string first, second;
+			if (seppos != std::string::npos)
+				{
+					first = el.substr(0, seppos);
+					second = el.substr(seppos+1);
+				}
+			if (callback)
+				{
+					first = callback(first);
+					second = callback(second);
+				}
+			
+			out.insert( std::pair<std::string, std::string>( first, second ) );
+		}
+	return out;
+}
+
 static std::string& toLower(std::string& s)
 {
 	std::transform(s.begin(), s.end(), s.begin(), (int(*)(int)) tolower );
@@ -214,3 +313,105 @@ struct lowerCaseCompare
 		return (toLower(str)==compareWith);
 	}
 };
+
+/* Escape with utf8 string support */
+static std::string escape(std::string source, const std::string escapable, std::string escapeChar, bool unescape=false)
+{
+	std::map<std::string, std::string> substmap;
+	short utf8octets=0;
+	std::string ch;
+	char* chptr;
+
+	for (char _ch : escapable)
+		{
+			if (utf8octets==0)
+				{
+					if ((_ch & 0x80) == 0) utf8octets=1;
+					else if ((_ch & 0xE0) == 0xC0) utf8octets = 2;
+					else if ((_ch & 0xF0) == 0xE0) utf8octets = 3;
+					else if ((_ch & 0xF8) == 0xF0) utf8octets = 4;
+					else
+						utf8octets=1;				/* There is an error, but we will do it anyway*/
+					ch = std::string(5, '\0');
+					chptr = &ch[0];
+				}
+			--utf8octets;
+			*chptr++= _ch;
+
+			if (utf8octets == 0)
+				{
+					if (unescape)
+						substmap.insert({ escapeChar+ch.c_str(), ch.c_str() });
+					else
+						substmap.insert({ ch.c_str(), escapeChar+ch.c_str() });
+
+				}
+		}
+	
+	return string_replace(source, substmap, 0);
+}
+
+static std::string quote(std::string source, const std::string _quote, const std::string escapeChar)
+{
+	if (escapeChar.empty())
+		source=_quote+source+_quote;
+	else
+		source=_quote+escape(source, _quote+escapeChar, escapeChar)+_quote;
+
+	return source;
+}
+
+static std::string unquote(std::string source, const std::string _quote, const std::string escapeChar)
+{
+	auto first = source.find_first_of(_quote);
+	auto last = source.find_last_of(_quote);
+	auto quotel = _quote.length();
+	if (first != std::string::npos)
+		{
+			if (escapeChar.empty())
+				source=source.substr(first+quotel, last-first-quotel);
+			else
+				source=escape(source.substr(first+quotel, last-first-quotel), _quote+escapeChar, escapeChar, true);
+		}
+	return source;
+}
+
+static std::string quote(const char* source, const std::string _quote, const std::string escapeChar)
+{
+	std::string _source(source);
+	return quote(_source, _quote, escapeChar);
+}
+
+static std::string unquote(const char* source, const std::string _quote, const std::string escapeChar)
+{
+	std::string _source(source);
+	return unquote(_source, _quote, escapeChar);
+}
+
+static void setDefaultDelimiters(std::string start, std::string end)
+{
+	_defaultStartDelimiter = start;
+	_defaultEndDelimiter = end;
+}
+
+static std::string defaultStartDelimiter()
+{
+	return _defaultStartDelimiter;
+}
+
+static std::string defaultEndDelimiter()
+{
+	return _defaultEndDelimiter;
+}
+
+static std::string defaultStartDelimiter(std::string start)
+{
+	_defaultStartDelimiter = start;
+	return _defaultStartDelimiter;
+}
+
+static std::string defaultEndDelimiter(std::string end)
+{
+	_defaultEndDelimiter = end;
+	return _defaultEndDelimiter;
+}
