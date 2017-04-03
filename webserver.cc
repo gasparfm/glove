@@ -53,7 +53,7 @@ void helloAuth(GloveHttpRequest& request, GloveHttpResponse& response)
 
 void chatengine(GloveHttpRequest &request, GloveHttpResponse& response)
 {
-  response << "Chat with me waaraaaanaaaa\n";
+  response << "Chat with me\n";
 }
 
 #if ENABLE_WEBSOCKETS
