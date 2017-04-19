@@ -1,7 +1,7 @@
 #pragma once
 
-#if ENABLE_WEBSOCKETS
-#   include "glovewebsockets.hpp"
+#ifndef ENABLE_WEBSOCKETS
+#   define ENABLE_WEBSOCKETS 1
 #endif
 
 #if ENABLE_WEBSOCKETS
