@@ -138,7 +138,11 @@ public:
 		gloveData[key] = value;
 		return value;
 	}
-	
+
+	bool isLocal()
+	{
+		return c->local();
+	}
   /* Special arguments */
   std::map<std::string, std::string> special;
 private:

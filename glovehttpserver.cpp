@@ -22,6 +22,8 @@
 *  20170330 : Basic Authentication Method
 *  20170327 : Response::clear adds clearHeaders argument. Default to true
 *  20170112 : std::cout removed
+*  20161016 : GloveHttpRequest object's isLocal() method to know if it's a local
+*           : connection.
 *  20161004 : Minor connection bugs fixed
 *  20161003 : Fixed bug. Error 500 when compression not enabled.
 *           : HTTPS server

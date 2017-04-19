@@ -18,6 +18,7 @@
 * Changelog
 *  20170131 : - OpenSSL initialization is *not* thread safe. Added a little mutex
 *  20170127 : - sets tlsext_host_name when connecting with SSL. (SNI support!!)
+*  20161016 : - Client objects know if they are local connections
 *  20161007 : - bug fixed parsing URI arguments
 *  20161004 : - minor bugs to free resources when closing unfinished connections
 *           : - getservbyname wrapper with additional services (for now, only ws:// and wss://)
@@ -1851,6 +1852,9 @@ void Glove::listen(const int port, client_callback cb, std::string bind_ip, cons
   if (bind_ip.empty())
     bind_ip = getUnspecified(domain);
 
+	/* Save it to detect local connections */
+	boundIp = bind_ip;
+	
   sockaddr_in address;
   memset(&address, 0, sizeof(address));
 
@@ -1919,6 +1923,22 @@ void Glove::listen(const int port, client_callback cb, std::string bind_ip, cons
     }
 }
 
+ bool Glove::isLocal(std::string& ipAddress)
+ {
+	 /* Only IPv4 now */
+	 if (ipAddress.empty())
+		 return false;
+	 if (ipAddress.length()<7)
+		 return false;
+	 if (ipAddress.substr(0,3)=="127")
+		 return true;
+	 if (ipAddress == boundIp)
+		 return true;
+
+	 return false;
+ }
+
+ 
 void Glove::serverRejectConnection()
 {
   Conn_description client_conn;

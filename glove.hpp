@@ -1173,8 +1173,15 @@ public:
     {
       return _receive_fixed(size, timeout, true, default_values.buffer_size, false, default_values.exceptions & EXCEPTION_TIMEOUT);
     }
+
+		bool local()
+		{
+			return _local;
+		}
+		
 	private:
 		unsigned clientId;
+		bool _local;
   };
 
   /**
@@ -1825,6 +1832,7 @@ protected:
   {
     return clients_connected.size();
   }
+	bool isLocal(std::string& ipAddress);
   void serverRejectConnection();
 #if ENABLE_OPENSSL
   /**
@@ -1886,7 +1894,8 @@ protected:
 #endif
   // status
   bool connected;
-
+	std::string boundIp;
+	
   bool _shutdown_on_destroy;
   // server options
   struct
