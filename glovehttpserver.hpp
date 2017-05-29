@@ -120,7 +120,8 @@ public:
   GloveBase::uri getUri() const;
 	bool auth(GloveHttpResponse& response, std::function<int(GloveHttpRequest&, GloveHttpResponse&)> authFunc, const std::string& authTypes, const std::string& realm="Access denied");
 	bool checkPassword(const std::string& password);
-	
+	/* Check password after hashing it (Basic Auth Only) */
+	bool checkHashedPassword(const std::string& password, std::function<std::string(const std::string&)> hashfunc);
   inline GloveHttpServer* server() const
   {
     return srv;
@@ -163,6 +164,7 @@ private:
   void parseContentType(const std::string& method);
   std::string getAuthData(const std::string& raw_location);
 	bool checkPasswordBasicAuth(const std::string& password);
+	bool checkHashedPasswordBasic(const std::string& password, std::function<std::string(const std::string&)> hashfunc);
 	bool checkPasswordDigestAuth(const std::string& password);
 	static bool checkDigestAuth(std::string& address, std::string& path, std::map<std::string, std::string>& data, std::string& username);
 };

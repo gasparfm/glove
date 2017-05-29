@@ -495,6 +495,19 @@ bool GloveHttpRequest::checkPassword(const std::string& password)
 	return false;
 }
 
+bool GloveHttpRequest::checkHashedPassword(const std::string& password, std::function<std::string(const std::string&)> hashfunc)
+{
+	if (authType == "Basic")
+		return checkHashedPasswordBasic(password, hashfunc);
+
+	return false;
+}
+
+bool GloveHttpRequest::checkHashedPasswordBasic(const std::string& password, std::function<std::string(const std::string&)> hashfunc)
+{
+	return ( (uri.password.length()>0) && (password== hashfunc(uri.password)) );
+}
+
 bool GloveHttpRequest::checkPasswordBasicAuth(const std::string& password)
 {
 	return ( (uri.password.length()>0) && (password== uri.password) );
