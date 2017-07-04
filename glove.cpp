@@ -16,6 +16,7 @@
 *  - I want to abstract the final user (application programmer) from socket operations but without losing control and information
 *
 * Changelog
+*  20170717 : - Fixed local connection detection. Not merged right from another project.
 *  20170131 : - OpenSSL initialization is *not* thread safe. Added a little mutex
 *  20170127 : - sets tlsext_host_name when connecting with SSL. (SNI support!!)
 *  20161016 : - Client objects know if they are local connections
@@ -1966,7 +1967,7 @@ void Glove::serverRejectConnection()
   if (tmcRejectCb)
     {
       Client *c;
-      c = (server_options.copy_options)?new Client(client_conn, 0, ipaddress, "", default_values):new Client(client_conn, 0, ipaddress, "");
+      c = (server_options.copy_options)?new Client(client_conn, 0, isLocal(ipaddress), ipaddress, "", default_values):new Client(client_conn, 0, isLocal(ipaddress), ipaddress, "");
       c->send(tmcRejectCb(c));
       delete c;
     }
@@ -2105,9 +2106,9 @@ void Glove::serverRejectConnection()
 	 clients_connected_mutex.lock();
 	 unsigned thisClient = clientId++;
 	 if (server_options.copy_options)
-		 c = new Client(client_conn, thisClient, ipaddress, hostname, default_values);
+		 c = new Client(client_conn, thisClient, isLocal(ipaddress), ipaddress, hostname, default_values);
 	 else
-		 c = new Client(client_conn, thisClient, ipaddress, hostname);
+		 c = new Client(client_conn, thisClient, isLocal(ipaddress), ipaddress, hostname);
 
 	 c->loggerCallback(_loggerCallback); /* Inherit logger callback*/
 

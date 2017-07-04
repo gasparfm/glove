@@ -1098,7 +1098,7 @@ public:
      * @param ipaddress IP Address of this client
      * @param host      Host
      */
-    Client(Conn_description conn, unsigned clientId, std::string ipaddress, std::string host):clientId(clientId)
+    Client(Conn_description conn, unsigned clientId, bool local, std::string ipaddress, std::string host):clientId(clientId), _local(local)
     {
       this->conn = conn;
       this->connectionInfo.ip_address = ipaddress;
@@ -1114,7 +1114,7 @@ public:
      * @param host      Host
      * @param options   Default options for this client
      */
-    Client(Conn_description conn, unsigned clientId, std::string ipaddress, std::string host, local_options options):Client(conn, clientId, ipaddress, host)
+    Client(Conn_description conn, unsigned clientId, bool local, std::string ipaddress, std::string host, local_options options):Client(conn, clientId, local, ipaddress, host)
     {
       default_values = options;
     }
