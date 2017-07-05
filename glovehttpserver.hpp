@@ -148,7 +148,7 @@ public:
 		if (forwarded.empty())
 			return isLocal;
 		else
-			return ((isLocal) && (forwarded == c->get_address()) );
+			return ((isLocal) && (forwarded == c->get_address(true)) );
 	}
   /* Special arguments */
   std::map<std::string, std::string> special;
