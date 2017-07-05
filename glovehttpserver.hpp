@@ -142,7 +142,13 @@ public:
 
 	bool isLocal()
 	{
-		return c->local();
+		auto forwarded = getHeader("X-Forwarded-For");
+		auto isLocal = c->local();
+		
+		if (forwarded.empty())
+			return isLocal;
+		else
+			return ((isLocal) && (forwarded == c->get_address()) );
 	}
   /* Special arguments */
   std::map<std::string, std::string> special;
