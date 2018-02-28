@@ -9,7 +9,7 @@
 *
 * Notes:
 *   - Lots of ideas borrowed from other projects
-* 
+*
 * Changelog
 *  20170127 : - Error handler for background requests
 *  20170112 : - SSL condition to compile without SSL support
@@ -23,6 +23,7 @@
 *  0 - Multipart management
 *  1 - Optimization
 *  2 - Some more control over requests
+*  3 - Have to improve request() some inputs may fail
 *
 * MIT Licensed:
 * Copyright (c) 2016 Gaspar Fernández
@@ -33,10 +34,10 @@
 * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 * copies of the Software, and to permit persons to whom the Software is
 * furnished to do so, subject to the following conditions:
-* 
+*
 * The above copyright notice and this permission notice shall be included in all
 * copies or substantial portions of the Software.
-* 
+*
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -44,7 +45,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-* 
+*
 *************************************************************/
 
 #include "glovehttpclient.hpp"
@@ -80,7 +81,7 @@ GloveHttpClient::GloveHttpClient(Callback callback, ErrorHandler errhandler): Gl
 	_callback = callback;
 	_errhandler = errhandler;
 }
-	
+
 GloveHttpClient::~GloveHttpClient()
 {
 }
@@ -92,7 +93,7 @@ GloveHttpClientResponse GloveHttpClient::request(std::string url, std::string re
 	GloveHttpClientRequest request (url, data, "", headers, reqType);
 	return getUrlData(request, clientConfig.timeout, clientConfig.checkCertificates, clientConfig.maxRedirects);
 }
-	
+
 GloveHttpClientResponse GloveHttpClient::request(std::string url, std::string reqType, std::string& data)
 {
 	std::map < std::string, std::string> headers;
@@ -103,7 +104,7 @@ GloveHttpClientResponse GloveHttpClient::request(std::string url, std::string re
 GloveHttpClientResponse GloveHttpClient::request(std::string url, std::string reqType, std::string& data, std::map<std::string, std::string>& headers, std::string contentType)
 {
 	GloveHttpClientRequest request (url, data, contentType, headers, reqType);
-	return getUrlData(request, clientConfig.timeout, clientConfig.checkCertificates, clientConfig.maxRedirects);		
+	return getUrlData(request, clientConfig.timeout, clientConfig.checkCertificates, clientConfig.maxRedirects);
 }
 
 void GloveHttpClient::bgrequest(std::string url, std::string reqType)
@@ -113,7 +114,7 @@ void GloveHttpClient::bgrequest(std::string url, std::string reqType)
 	GloveHttpClientRequest request (url, data, "", headers, reqType);
 	addRequestToQueue(request);
 }
-	
+
 void GloveHttpClient::bgrequest(std::string url, std::string reqType, std::string& data)
 {
 	std::map < std::string, std::string> headers;
@@ -193,23 +194,24 @@ GloveHttpClientResponse GloveHttpClient::getUrlData(GloveHttpClientRequest &requ
 	if (u.rawpath.empty())
 		u.rawpath = "/";
 	auto startTime = std::chrono::steady_clock::now();
-	std::string reqStr = request.reqType+" "+u.rawpath+" HTTP/1.1\r\n"
-		"Host: "+u.host+"\r\n"
-		"Accept: text/html,application/xhtml+xml,application/xml\r\n"
-		"Connection: close\r\n"
-		"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/45.0.2454.101 Chrome/45.0.2454.101 Safari/537.36\r\n";
+	std::string reqStr = request.reqType+" "+u.rawpath+" HTTP/1.1"+GloveDef::CRLF+
+		"Host: "+u.host+GloveDef::CRLF+
+		"Accept: text/html,application/xhtml+xml,application/xml"+GloveDef::CRLF+
+		"Connection: close"+GloveDef::CRLF+
+		"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/45.0.2454.101 Chrome/45.0.2454.101 Safari/537.36"+GloveDef::CRLF;
 	for (auto header : request.headers)
 		{
-			reqStr+=header.first+": "+header.second+"\r\n";
+			reqStr+=header.first+": "+header.second+GloveDef::CRLF;
 		}
 	if (!request.data.empty())
 		{
 			if (request.contentType.empty())
 				request.contentType = "application/x-www-form-urlencoded";
-			reqStr+="Content-Type: "+request.contentType;
-			reqStr+="Content-Length: "+std::to_string(request.data.length());
+			reqStr+="Content-Type: "+request.contentType+GloveDef::CRLF;
+			reqStr+="Content-Length: "+std::to_string(request.data.length())+GloveDef::CRLF;
 		}
-	g.send(reqStr+ "\r\n"+request.data);
+	g.send(reqStr+ GloveDef::CRLF +request.data);
+
 	out = g.receive();
 	auto firstByte = std::chrono::steady_clock::now();
 	auto firstline = out.find(GloveDef::CRLF); /* End of first line. Protocol Code Status...*/
@@ -274,7 +276,7 @@ void GloveHttpClient::processBackgroundQueue()
 	if (requestQueue.size()==0)
 		return;
 
-	std::thread(&GloveHttpClient::backgroundThread, this).detach();	
+	std::thread(&GloveHttpClient::backgroundThread, this).detach();
 }
 
 void GloveHttpClient::backgroundThread()
@@ -285,7 +287,7 @@ void GloveHttpClient::backgroundThread()
 			queueMutex.unlock();
 			return ;
 		}
-	
+
 	GloveHttpClientRequest request = requestQueue.front();
 	try
 		{
