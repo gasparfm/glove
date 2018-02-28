@@ -23,7 +23,6 @@
 *  0 - Multipart management
 *  1 - Optimization
 *  2 - Some more control over requests
-*  3 - Have to improve request() some inputs may fail
 *
 * MIT Licensed:
 * Copyright (c) 2016 Gaspar Fernández
@@ -194,24 +193,25 @@ GloveHttpClientResponse GloveHttpClient::getUrlData(GloveHttpClientRequest &requ
 	if (u.rawpath.empty())
 		u.rawpath = "/";
 	auto startTime = std::chrono::steady_clock::now();
-	std::string reqStr = request.reqType+" "+u.rawpath+" HTTP/1.1"+GloveDef::CRLF+
-		"Host: "+u.host+GloveDef::CRLF+
-		"Accept: text/html,application/xhtml+xml,application/xml"+GloveDef::CRLF+
-		"Connection: close"+GloveDef::CRLF+
-		"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/45.0.2454.101 Chrome/45.0.2454.101 Safari/537.36"+GloveDef::CRLF;
+	std::string reqStr = request.reqType+" "+u.rawpath+" HTTP/1.1\r\n"
+		"Host: "+u.host+"\r\n"
+		"Accept: text/html,application/xhtml+xml,application/xml\r\n"
+		"Connection: close\r\n"
+		"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/45.0.2454.101 Chrome/45.0.2454.101 Safari/537.36\r\n";
 	for (auto header : request.headers)
 		{
-			reqStr+=header.first+": "+header.second+GloveDef::CRLF;
+			reqStr+=header.first+": "+header.second+"\r\n";
 		}
+
 	if (!request.data.empty())
 		{
 			if (request.contentType.empty())
 				request.contentType = "application/x-www-form-urlencoded";
-			reqStr+="Content-Type: "+request.contentType+GloveDef::CRLF;
-			reqStr+="Content-Length: "+std::to_string(request.data.length())+GloveDef::CRLF;
+			reqStr+="Content-Type: "+request.contentType+"\r\n";
+			reqStr+="Content-Length: "+std::to_string(request.data.length())+"\r\n";
 		}
-	g.send(reqStr+ GloveDef::CRLF +request.data);
 
+	g.send(reqStr+ "\r\n"+request.data);
 	out = g.receive();
 	auto firstByte = std::chrono::steady_clock::now();
 	auto firstline = out.find(GloveDef::CRLF); /* End of first line. Protocol Code Status...*/
