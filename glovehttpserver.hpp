@@ -52,12 +52,12 @@ class GloveSessionRepository
 public:
 	GloveSessionRepository();
 	virtual ~GloveSessionRepository();
-	
+
 	void insert(const std::string key, const std::string& value, time_t timeout=0);
 	bool remove(const std::string& key);
 	bool get(const std::string& key, std::string& value);
 	bool pop(const std::string& key, std::string& value);
-	
+
 	uint64_t maxEntries(uint64_t val);
 	uint64_t maxEntries();
 
@@ -68,7 +68,7 @@ public:
 protected:
 	void clearTimeouts();
 	void clearOldEntries(uint64_t howmany);
-	
+
 private:
 	struct sessionInfo_t
 	{
@@ -128,12 +128,14 @@ public:
   }
 
   std::string getMessage(std::string _template);
+	std::string getArgument(std::string argument);
+	std::map<std::string, std::string> getArguments();
 
 	std::string extra(std::string key)
 	{
 		return gloveData[key];
 	}
-	
+
 	std::string extra(std::string key, std::string value)
 	{
 		gloveData[key] = value;
@@ -144,7 +146,7 @@ public:
 	{
 		auto forwarded = getHeader("X-Forwarded-For");
 		auto isLocal = c->local();
-		
+
 		if (forwarded.empty())
 			return isLocal;
 		else
@@ -315,7 +317,7 @@ private:
   short _responseCode;
   std::string _contentType;
 	bool compression;
-	
+
 	std::string getFinalOutput(std::vector<std::string>& compression,
 														 std::map<std::string, std::string>& headers);
 	bool compressionPossible(std::map<std::string, std::string>& headers, std::string& compressionMethod);
@@ -383,7 +385,7 @@ public:
 		if (_receive != nullptr)
 			_receive(data, ws);
 	}
-	
+
 	bool maintenance(GloveWebSocketHandler& ws)
 	{
 		if (_maintenance != nullptr)
@@ -412,7 +414,7 @@ public:
 	{
 		return _fragmentation;
 	}
-	
+
 private:
 	_ws_receive_callback _receive;
 	_ws_accept_callback _accept;
@@ -547,7 +549,7 @@ public:
   static void fileServer(GloveHttpRequest &request, GloveHttpResponse& response);
   static void fileServerExt(GloveHttpRequest &request, GloveHttpResponse& response, std::string localPath);
   static void fileServerFixed(GloveHttpRequest &request, GloveHttpResponse& response, std::string path);
-	
+
   /* Default response processord */
   static void response404Processor(GloveHttpRequest& request, GloveHttpResponse& response);
   static void response4XXProcessor(GloveHttpRequest& request, GloveHttpResponse& response);
@@ -618,7 +620,7 @@ public:
 	{
 		return ghoptions.compression;
 	}
-	
+
 	std::string compression()
 	{
 		std::string out;
@@ -626,7 +628,7 @@ public:
 			{
 				if (cm != ghoptions.compression.begin())
 					out+=", ";
-				
+
 				out+=*cm;
 			}
 		return out;
@@ -640,7 +642,7 @@ public:
 
 	uint64_t webSocketsMaintenanceInterval()
 	{
-		return wsMaintenanceInterval;		
+		return wsMaintenanceInterval;
 	}
 
 	uint64_t webSocketsInterval(uint64_t val)
@@ -713,7 +715,7 @@ protected:
 	/* Web Sockets message fragmentation size */
 	uint64_t wsFragmentation;
   int port;
-  std::string _serverSignature; 
+  std::string _serverSignature;
   std::string _simpleSignature;
   static std::map<std::string, std::string> _mimeTypes;
   static std::string _unknownMimeType;
@@ -735,7 +737,7 @@ protected:
 	bool webSocket13Handshake(Glove::Client& client, GloveHttpRequest& req);
 	int doWebSockets(Glove::Client& client, GloveHttpUri* guri, GloveHttpRequest& request, GloveHttpResponse& response);
 #endif
-  int _receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout=0);
+  int _receiveData(Glove::Client& client, std::string &protocol, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout=0);
 
   void gloveError(Glove::Client &client, int clientId, GloveException &e);
   VirtualHost* getVHost(std::string name);
@@ -743,4 +745,3 @@ protected:
 };
 
 #endif /* _GLOVEHTTPSERVER_H */
-

@@ -9,11 +9,15 @@
 * @date 03 apr 2015
 *
 * Notes:
-*  - Based on ideas taken on some PHP Frameworks, Java Servlets 
+*  - Based on ideas taken on some PHP Frameworks, Java Servlets
 *    and more. Not intended to use it on big or public websites.
 *    Just to use it in an internal and controlled way.
 *
 * Changelog:
+*  20200507 : Added GloveHttpRequest::getArgument(arg) and
+*             GloveHttpRequest::getArguments() to get URI arguments easily.
+*  20200422 : Bug fixing. Timeout after keep-alive request was always 0.
+*  20200421 : Bug fixing. Keep alive only reuses socket twice.
 *  20170403 : Directive ENABLE_WEBSOCKETS to compile with or without
 *             Websockets support
 *  20170403 : Helper methods auth(), checkPassword(), getAuthUser() for client
@@ -52,7 +56,7 @@
 *  20150410 : Some bug fixing
 *  20150404 : Added HTTP Response data
 *  20150403 : Begin this project
-* 
+*
 * To-do:
 *   - Error checking for addResponseProcessor() and addResponseGenericProcessor()
 *   - Error checking for addAutoResponse() and autoResponses()
@@ -74,10 +78,10 @@
 * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 * copies of the Software, and to permit persons to whom the Software is
 * furnished to do so, subject to the following conditions:
-* 
+*
 * The above copyright notice and this permission notice shall be included in all
 * copies or substantial portions of the Software.
-* 
+*
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -85,7 +89,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-* 
+*
 *************************************************************/
 
 #include "glovehttpserver.hpp"
@@ -132,7 +136,7 @@ std::map<std::string, std::string> GloveHttpServer::_mimeTypes = {
   {"js", "text/javascript"},
   {"woff", "application/font-woff"},
   /* Images */
-  {"jpg", "image/jpeg"}, 
+  {"jpg", "image/jpeg"},
   {"png", "image/png"},
   {"gif", "image/gif"}
 };
@@ -232,7 +236,6 @@ std::string GloveHttpRequest::getData(std::string elem, bool exact) const
 		{
 			return "";								/* Use getData for that. */
 		}
-
   return "";
 }
 
@@ -246,7 +249,7 @@ std::vector<std::pair<std::string, std::string> > GloveHttpRequest::getDataCol()
 					res.push_back(elem);
 				}
 		}
-	
+
 	return res;
 }
 
@@ -408,9 +411,8 @@ bool GloveHttpRequest::checkDigestAuth(std::string& address, std::string& path, 
 	auto realm = unquote(data["realm"], "\"", "\\");
 	auto uri=  unquote(data["uri"], "\"", "\\");
 	auto _username = unquote(data["username"], "\"", "\\");
-	
+
 	if (uri != path) {
-		std::cout<<"PATH MALO: "<<uri<<" *" <<path<<"*\n";
 		return false;								/* Path does not match */
 	}
 	if (algo.empty())
@@ -429,13 +431,23 @@ bool GloveHttpRequest::checkDigestAuth(std::string& address, std::string& path, 
 
 std::string GloveHttpRequest::getMessage(std::string _template)
 {
-  return string_replace(_template, 
+  return string_replace(_template,
 												{
 													{"{:url}", location},
 													{"{:urlcut}", location.substr(0, 50) },
 													{"{:method}", method }
 												});
-  
+
+}
+
+std::string GloveHttpRequest::getArgument(std::string argument)
+{
+	return uri.arguments[argument];
+}
+
+std::map<std::string, std::string> GloveHttpRequest::getArguments()
+{
+	return uri.arguments;
 }
 
 bool GloveHttpRequest::auth(GloveHttpResponse& response, std::function<int(GloveHttpRequest&, GloveHttpResponse&)> authFunc, const std::string& authTypes, const std::string& realm)
@@ -463,7 +475,7 @@ bool GloveHttpRequest::auth(GloveHttpResponse& response, std::function<int(Glove
 					/* digestAuthInfo.defaultTimeout(10); */
 					digestAuthInfo.insert(nonce+opaque+address, info);
 					/* digestAuthInfo.debug(); */
-					
+
 					extraArguments+=", nonce="+quote(nonce, "\"", "\\")+", qop="+quote("auth,auth-int", "\"", "\\")+", algorithm=MD5, opaque="+quote(opaque, "\"", "\\")+", domain=\"/private/ http://mirror.my.dom/private2/\"";
 				}
 			response.header("WWW-Authenticate", _authTypes[0]+" realm="+quote(realm, "\"", "\\")+extraArguments);
@@ -552,7 +564,7 @@ bool GloveHttpRequest::checkPasswordDigestAuth(const std::string& password)
 		resp = GloveCoding::md5_hex(HA1+":"+nonce+":"+HA2);
 	else
 		return false;
-	
+
 	return (response == resp);
 }
 
@@ -583,7 +595,7 @@ void GloveSessionRepository::clearOldEntries(uint64_t howmany)
 {
 	uint64_t deleted = 0;
 	std::vector<std::map<std::string, GloveSessionRepository::sessionInfo_t>::iterator> toDelete;
-	
+
 	auto doInsert = [&](const std::map<std::string, GloveSessionRepository::sessionInfo_t>::iterator& entry)
 		{
 			bool inserted = false;
@@ -613,7 +625,7 @@ void GloveSessionRepository::clearOldEntries(uint64_t howmany)
 				doInsert(entry);
 
 		};
-	
+
 	for (auto entry=storage.begin(); entry != storage.end(); ++entry)
 		{
 			tryInsert(entry);
@@ -633,7 +645,7 @@ void GloveSessionRepository::insert(const std::string key, const std::string& va
 
 	if (storage.size()>=_maxEntries)
 		clearOldEntries(_maxEntries-storage.size()+1);
-	
+
 	storage[key] = { now, timeout, value };
 }
 
@@ -665,7 +677,7 @@ bool GloveSessionRepository::pop(const std::string& key, std::string& value)
 	value = el->second.data;
 	storage.erase(el);
 	return true;
-	
+
 }
 
 uint64_t GloveSessionRepository::maxEntries(uint64_t val)
@@ -803,7 +815,7 @@ bool GloveHttpResponse::compressionPossible(std::map<std::string, std::string>& 
 	if (accept == headers.end())
 		return false;
 	compressionMethod = accept->second;
-		
+
 	return true;
 }
 
@@ -844,7 +856,7 @@ namespace
 GloveHttpUri::GloveHttpUri(std::string route, _url_callback ucb, int maxArgs, int minArgs, std::vector<std::string> methods, bool partialMatch, GloveUriService& mission):
   route(route),
   callback(ucb),
-  maxArgs(maxArgs), 
+  maxArgs(maxArgs),
   allowedMethods(methods),
   partialMatch(partialMatch),
 	_mission(mission)
@@ -1056,7 +1068,7 @@ void GloveHttpServer::baseInitialization()
 
 	/* Web Socket messages will be 32768 octets long */
 	wsFragmentation = 32768;
-	
+
   if (addVhost("%") != GloveHttpErrors::ALL_OK)
     return;			/* Exception here? */
 	/* std::cout << "Initialized\n"; */
@@ -1088,7 +1100,7 @@ void GloveHttpServer::listen(int listenPort, std::string bind_ip, const size_t b
   server = new Glove();
 	server->server_error_callback(std::bind(&GloveHttpServer::gloveError, this, ph::_1, ph::_2, ph::_3));
 	server->buffer_size(buffer_size);
-	server->listen(listenPort, 
+	server->listen(listenPort,
 								std::bind(&GloveHttpServer::clientConnection, this, ph::_1),
 								bind_ip,
 								backlog_queue,
@@ -1161,7 +1173,7 @@ void GloveHttpServer::addRoute(std::string route, url_callback callback, int max
 
 void GloveHttpServer::addRest(std::string route, std::string host, int minArgs, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall, url_callback get, url_callback post, url_callback put, url_callback patch, url_callback delet)
 {
-	addRest(route, host, minArgs, get, post, put, patch, delet, errorCall);		
+	addRest(route, host, minArgs, get, post, put, patch, delet, errorCall);
 }
 
 void GloveHttpServer::addRest(std::string route, int minArgs, std::function<void(GloveHttpRequest &request, GloveHttpResponse& response, int, std::string)> errorCall, url_callback get, url_callback post, url_callback put, url_callback patch, url_callback delet)
@@ -1189,7 +1201,7 @@ void GloveHttpServer::addRest(std::string route, std::string host, int minArgs, 
 		allowedMethods.push_back("DELETE");
 	if (errorCall == nullptr)
 		errorCall = &GloveHttpServer::defaultApiErrorCall;
-	
+
 	auto vhost = getVHost(host);
 	auto restProcessor = [get,post,put,patch,delet,errorCall] (GloveHttpRequest& request, GloveHttpResponse& response)
 		{
@@ -1227,7 +1239,7 @@ void GloveHttpServer::addRest(std::string route, std::string host, int minArgs, 
 					#else
 					errorCall(request, response, 0, "Internal error");
 					#endif
-				}			 
+				}
 		};
   vhost->routes.push_back(GloveHttpUri(route, restProcessor, -1, minArgs, allowedMethods, true));
 
@@ -1280,7 +1292,7 @@ void GloveHttpServer::addResponseGenericProcessor(std::string host, short errorC
 
 void GloveHttpServer::initializeMetrics()
 {
-  
+
 }
 
 bool GloveHttpServer::findRoute(VirtualHost& vhost, std::string method, GloveBase::uri uri, GloveHttpUri* &guri, std::map<std::string, std::string> &special)
@@ -1297,7 +1309,7 @@ bool GloveHttpServer::findRoute(VirtualHost& vhost, std::string method, GloveBas
   return false;
 }
 
-int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout)
+int GloveHttpServer::_receiveData(Glove::Client& client, std::string &protocol, std::map<std::string, std::string> &httpheaders, std::string &data, std::string &request_method, std::string &raw_location, double timeout)
 {
   long content_length = -1;
   long payload_received = 0;
@@ -1306,10 +1318,11 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, s
   std::string::size_type first_crlf;
   bool receiving = true;
   std::string input;
-  double currentTimeout;
+  double currentTimeout = this->timeout();
 
   if (timeout)			/* Maybe higher timeout when keepalive is on */
     {
+			std::cout << "TIMEOUT "<<timeout<<std::endl;
       client.timeout(timeout);
       client.timeout();
     }
@@ -1371,6 +1384,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, s
 					// Test protocol.
 					// We can improve it adding some more support, but it's enough for
 					// a tiny web service
+					protocol = input.substr( first_crlf - 8, 8);
 					if( input.substr( first_crlf - 8, 8) != "HTTP/1.1" )
 						{
 							error = GloveHttpErrors::ERROR_BAD_PROTOCOL;
@@ -1393,6 +1407,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, s
       std::string::size_type crlf_2 = input.find("\r\n\r\n");
       if( crlf_2 != std::string::npos && content_length == -1 )
 				{
+					std::cout << "LEO PRINCI"<<std::endl;
 					extract_headers(input, httpheaders, first_crlf+2);
 					if ( !httpheaders["Content-Length"].empty() )
 						{
@@ -1406,10 +1421,12 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::map<std::string, s
 						receiving = false;
 				}
 
-      if (content_length > -1 && payload_received >= content_length)
+      if (content_length > -1 && payload_received >= content_length) {
 				receiving = false;
-    }
+			}
 
+    }
+std::cout << content_length << " " <<payload_received << " _ " << content_length<<std::endl;
   if ( (!error) && (receiving) )
     error = GloveHttpErrors::ERROR_TIMED_OUT;
 
@@ -1429,17 +1446,25 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
   client >> Glove::Client::set_read_once(true);
   client >> Glove::Client::set_exception_on_timeout(false);
   auto startTime = std::chrono::steady_clock::now();
+	auto isKeepAlive = [](std::map<std::string, std::string> &httpheaders, std::string& protocol) {
+											 return ( (httpheaders["Connection"] == "keep-alive") || (protocol=="HTTP/1.1") );
+										 };
   do
     {
+			std::cerr << "ITERACION DE CLIENTE\n";
       std::string data, request_method, raw_location;
       std::map<std::string, std::string> httpheaders;
+			std::string protocol;
       int error = 0;
-      error = _receiveData(client, httpheaders, data, request_method, raw_location, (totalRequests)?ghoptions.keepalive_timeout:0);
-      if (error == GloveHttpErrors::ERROR_TIMED_OUT)
+      error = _receiveData(client, protocol, httpheaders, data, request_method, raw_location, (totalRequests)?ghoptions.keepalive_timeout:0);
+      if (error == GloveHttpErrors::ERROR_TIMED_OUT) {
+				std::cerr << "TIMED OUT!!" << std::endl;
 				return 0;
-
-      if ( (ghoptions.keepalive_timeout<=0) || (httpheaders["Connection"] != "keep-alive") ) 
+			}
+      if ( (ghoptions.keepalive_timeout<=0) || (!isKeepAlive(httpheaders, protocol)) ) {
+				std::cerr << "VOY A CERRAR LA CONEXION "<< ghoptions.keepalive_timeout << " - " << isKeepAlive(httpheaders, protocol)<<std::endl;
 				finished = true;
+			}
       auto requestTime = std::chrono::steady_clock::now();
       GloveHttpRequest request(this, &client, error, request_method, raw_location, data, httpheaders, this->port);
       /* new request */
@@ -1579,7 +1604,7 @@ int GloveHttpServer::doWebSockets(Glove::Client& client, GloveHttpUri* guri, Glo
 					else
 						{
 							wsdata.update(frame);
-							ws.receive(wsdata, handler);							
+							ws.receive(wsdata, handler);
 						}
 
 					/* We have data */
