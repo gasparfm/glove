@@ -227,6 +227,7 @@ std::string GloveHttpRequest::getData(std::string elem, bool exact) const
 																 {
 																	 if (el.first.find(elem)!=std::string::npos)
 																		 return true;
+																	 return false;
 																 });
 					if (ud != urlencoded_data.end())
 						return ud->second;
@@ -656,6 +657,7 @@ bool GloveSessionRepository::remove(const std::string& key)
 		return false;
 
 	storage.erase(el);
+	return true;
 }
 
 bool GloveSessionRepository::get(const std::string& key, std::string& value)
@@ -807,6 +809,7 @@ void GloveHttpResponse::send(GloveHttpRequest &request, Glove::Client &client)
 
 std::string GloveHttpResponse::getFinalOutput(std::vector<std::string>& compression, std::map<std::string, std::string>& headers)
 {
+	return "";
 }
 
 bool GloveHttpResponse::compressionPossible(std::map<std::string, std::string>& headers, std::string& compressionMethod)
@@ -938,6 +941,7 @@ void GloveHttpUri::callAction(GloveHttpRequest& request, GloveHttpResponse& resp
 std::string GloveHttpServer::serverSignature(std::string newSig)
 {
   _serverSignature = newSig;
+	return _serverSignature;
 }
 
 std::string GloveHttpServer::serverSignature(GloveHttpRequest& req)
@@ -1001,6 +1005,8 @@ short GloveHttpServer::addVhostAlias(std::string name, std::string alias)
     return GloveHttpErrors::BAD_ALIAS_NAME;
 
   vhosts_aliases.insert({name, alias});
+
+	return 0;
 }
 
 short GloveHttpServer::addVhostAlias(std::string name, std::vector<std::string> aliases)
@@ -1322,7 +1328,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::string &protocol, 
 
   if (timeout)			/* Maybe higher timeout when keepalive is on */
     {
-			std::cout << "TIMEOUT "<<timeout<<std::endl;
+			//			std::cout << "TIMEOUT "<<timeout<<std::endl;
       client.timeout(timeout);
       client.timeout();
     }
@@ -1407,7 +1413,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::string &protocol, 
       std::string::size_type crlf_2 = input.find("\r\n\r\n");
       if( crlf_2 != std::string::npos && content_length == -1 )
 				{
-					std::cout << "LEO PRINCI"<<std::endl;
+					/* std::cout << "LEO PRINCI"<<std::endl; */
 					extract_headers(input, httpheaders, first_crlf+2);
 					if ( !httpheaders["Content-Length"].empty() )
 						{
@@ -1426,7 +1432,7 @@ int GloveHttpServer::_receiveData(Glove::Client& client, std::string &protocol, 
 			}
 
     }
-std::cout << content_length << " " <<payload_received << " _ " << content_length<<std::endl;
+/* std::cout << content_length << " " <<payload_received << " _ " << content_length<<std::endl; */
   if ( (!error) && (receiving) )
     error = GloveHttpErrors::ERROR_TIMED_OUT;
 
@@ -1451,18 +1457,17 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
 										 };
   do
     {
-			std::cerr << "ITERACION DE CLIENTE\n";
       std::string data, request_method, raw_location;
       std::map<std::string, std::string> httpheaders;
 			std::string protocol;
       int error = 0;
       error = _receiveData(client, protocol, httpheaders, data, request_method, raw_location, (totalRequests)?ghoptions.keepalive_timeout:0);
       if (error == GloveHttpErrors::ERROR_TIMED_OUT) {
-				std::cerr << "TIMED OUT!!" << std::endl;
+				/* std::cerr << "TIMED OUT!!" << std::endl; */
 				return 0;
 			}
       if ( (ghoptions.keepalive_timeout<=0) || (!isKeepAlive(httpheaders, protocol)) ) {
-				std::cerr << "VOY A CERRAR LA CONEXION "<< ghoptions.keepalive_timeout << " - " << isKeepAlive(httpheaders, protocol)<<std::endl;
+				/* std::cerr << "CLOSING CONNECTION "<< ghoptions.keepalive_timeout << " - " << isKeepAlive(httpheaders, protocol)<<std::endl; */
 				finished = true;
 			}
       auto requestTime = std::chrono::steady_clock::now();
@@ -1489,6 +1494,7 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       else
 				{
 					GloveHttpUri *guri;
+
 					if (findRoute(*vhost, request_method, request.getUri(), guri, request.special))
 						{
 							#if ENABLE_WEBSOCKETS
@@ -1522,6 +1528,8 @@ int GloveHttpServer::clientConnection(Glove::Client &client)
       /* Maybe we can store this measure too */
       startTime = std::chrono::steady_clock::now();
     } while (!finished);
+
+	return 1;
 }
 
 #if ENABLE_WEBSOCKETS

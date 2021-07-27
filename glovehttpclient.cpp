@@ -224,7 +224,7 @@ GloveHttpClientResponse GloveHttpClient::getUrlData(GloveHttpClientRequest &requ
 	if (headerend == std::string::npos)
 		throw GloveHttpClientException (3, "Unexpected data received");
 
-	extract_headers(out.substr(firstline+1, headerend-firstline-1), httpheaders, 0);
+	extract_headers(out.substr(firstline+1, headerend-firstline+1), httpheaders, 0);
 	/* this->say("Return status: "+std::to_string(status), 3); */
 	namespace chr = std::chrono;
 	if ( (status>=300) && (status<400) )

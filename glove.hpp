@@ -1209,10 +1209,13 @@ public:
     {
       SSLv23,
       SSLv3,		/* Deprecated!*/
+			TLS,
       TLSv1,
       TLSv1_1,
       TLSv1_2,
-      DTLSv1
+			DTLS,
+      DTLSv1,
+			DTLSv1_2
     };
 
   enum:unsigned

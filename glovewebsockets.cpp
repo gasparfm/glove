@@ -9,7 +9,7 @@
 *
 * Changelog:
 *  20161001 : Initial release
-* 
+*
 * To-do:
 *   - Apply support for some extensions
 *
@@ -22,10 +22,10 @@
 * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 * copies of the Software, and to permit persons to whom the Software is
 * furnished to do so, subject to the following conditions:
-* 
+*
 * The above copyright notice and this permission notice shall be included in all
 * copies or substantial portions of the Software.
-* 
+*
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -33,7 +33,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-* 
+*
 *************************************************************/
 
 #include "glovewebsockets.hpp"
@@ -81,7 +81,7 @@ GloveWebSocketFrame::GloveWebSocketFrame(std::string& data):frameError(true)
 
 	if (pllength>=126)
 		{
-			if (d-dorig+2 > len) return;		
+			if (d-dorig+2 > len) return;
 			pllength2= (*++d<<8)+*++d; /* d[2] , d[3]*/
 			payloadLen=pllength2;
 		}
@@ -149,7 +149,7 @@ std::string GloveWebSocketFrame::raw()
 		{
 			byte += payloadLen;
 			out+=byte;
-		}	
+		}
 	else if (payloadLen<65535)
 		{
 			byte+=126;
@@ -173,14 +173,14 @@ std::string GloveWebSocketFrame::raw()
 		{
 			uint32_t __mask = rand()%65536 * (1+rand()%65535);
 			mask = (unsigned char*)&__mask;
-			out+=mask[0] + mask[1] + mask[2] + mask[3];			 
+			out+=mask[0] + mask[1] + mask[2] + mask[3];
 			auto d = (unsigned char*)&_data[0];
 			short loops=0;
 			while (payloadLen--)
 				{
 					out+= ((*d++) ^ mask[loops++]);
 					loops%=4;
-				}				
+				}
 		}
 	else
 		out+=std::move(_data);
@@ -210,7 +210,7 @@ void GloveWebSocketData::update(GloveWebSocketFrame& frame)
 	if (clearWhenData)
 		{
 			_data.clear();
-			dataType = INVALID_DATATYPE;				
+			dataType = INVALID_DATATYPE;
 		}
 	/* If type is CONT, preserve last dataType. If CONT comes
 		 with clearWhenData = 1, INVALID_DATATYPE will be the type,
@@ -242,6 +242,8 @@ bool GloveWebSocketHandler::pong()
 	_latency = (double) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - temp_start).count();
 	if (pongCallback != nullptr)
 		pongCallback(*this);
+
+	return true;
 }
 
 void GloveWebSocketHandler::ping(std::string data, std::function<void(GloveWebSocketHandler&)> callback)
@@ -264,12 +266,13 @@ int GloveWebSocketHandler::send(std::string data, unsigned char type)
 {
 	if (type == 0)
 		type = _type;
-	
+
 	std::vector <GloveWebSocketFrame> frames = divideMessage(type, data, false);
 	for (auto f:  frames)
 		{
 			_client << f.raw();
 		}
+	return 0;
 }
 
 std::vector <GloveWebSocketFrame> GloveWebSocketHandler::divideMessage(unsigned char opcode, std::string& data, bool masked)
